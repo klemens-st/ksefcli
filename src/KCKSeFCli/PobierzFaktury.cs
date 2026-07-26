@@ -28,12 +28,6 @@ public class PobierzFakturyCommand : SzukajFakturCommand {
     [Option("no-json", HelpText = "Nie zapisuj metadanych faktury w plikach .json")]
     public bool NoJson { get; set; }
 
-    [Option("retry-attempts", Default = 5, HelpText = "Number of retry attempts on rate limit.")]
-    public int RetryAttempts { get; set; }
-
-    [Option("no-local-rate-limit", HelpText = "Disable local rate limiting.")]
-    public bool NoLocalRateLimit { get; set; }
-
     public override async Task<int> ExecuteInScopeAsync(IServiceScope scope, CancellationToken cancellationToken) {
         XML2PDFCommand.Runner? pdfRunner = null;
         if (Pdf) {

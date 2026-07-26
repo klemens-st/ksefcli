@@ -35,6 +35,12 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
     [Option("offlinemode", Required = false, HelpText = "Ustaw jeśli chcesz ustawic offline mode")]
     public bool OfflineModeOption { get; set; } = false;
 
+    [Option("retry-attempts", Default = 5, HelpText = "Liczba ponownych prób po przekroczeniu limitu zapytań (HTTP 429).")]
+    public int RetryAttempts { get; set; }
+
+    [Option("no-local-rate-limit", HelpText = "Wyłącz lokalne ograniczanie liczby zapytań do API.")]
+    public bool NoLocalRateLimit { get; set; }
+
     public static IEnumerable<(string FileName, byte[] Content)> GetFilesWithContent(IEnumerable<string> paths) {
         return paths.Select(path => (
             FileName: Path.GetFileName(path),
@@ -177,7 +183,9 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
             IEnumerable<(string FileName, byte[] Content)> invoices,
             IKSeFClient ksefClient,
         ICryptographyService cryptographyService,
-        string accessToken) {
+        string accessToken,
+        ILimitsClient? limitsClient,
+        CancellationToken cancellationToken) {
         EncryptionData encryptionData = cryptographyService.GetEncryptionData();
 
         Log.Information("1. Przygotowanie paczki ZIP");
@@ -195,8 +203,13 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
          DefaultValue,
          OfflineModeOption);
 
-        OpenBatchSessionResponse openBatchSessionResponse =
-            await BatchUtils.OpenBatchAsync(ksefClient, openBatchRequest, accessToken).ConfigureAwait(false);
+        OpenBatchSessionResponse openBatchSessionResponse = await KsefRateLimitWrapper.ExecuteWithRetryAsync(
+            (_) => BatchUtils.OpenBatchAsync(ksefClient, openBatchRequest, accessToken),
+            KsefApiEndpoint.SessionBatchOpen,
+            limitsClient,
+            RetryAttempts,
+            accessToken,
+            cancellationToken).ConfigureAwait(false);
 
         return new OpenBatchSessionResult(
             openBatchSessionResponse.ReferenceNumber,
@@ -209,17 +222,25 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
             IKSeFClient ksefClient,
             string referenceNumber,
             string accessToken,
+            ILimitsClient? limitsClient,
+            int retryAttempts,
             CancellationToken cancellationToken) {
         const int pageSize = 50;
         string? continuationtoken = null;
         do {
-            SessionInvoicesResponse sessionInvoices = await ksefClient
-                                        .GetSessionInvoicesAsync(
-                                        referenceNumber,
-                                        accessToken,
-                                        pageSize,
-                                        continuationtoken,
-                                        cancellationToken).ConfigureAwait(false);
+            string? pageToken = continuationtoken;
+            SessionInvoicesResponse sessionInvoices = await KsefRateLimitWrapper.ExecuteWithRetryAsync(
+                (ct) => ksefClient.GetSessionInvoicesAsync(
+                    referenceNumber,
+                    accessToken,
+                    pageSize,
+                    pageToken,
+                    ct),
+                KsefApiEndpoint.SessionInvoiceStatus,
+                limitsClient,
+                retryAttempts,
+                accessToken,
+                cancellationToken).ConfigureAwait(false);
 
             foreach (SessionInvoice sessionInvoice in sessionInvoices.Invoices) {
                 Console.Out.WriteLine(JsonSerializer.Serialize(sessionInvoice, new JsonSerializerOptions {
@@ -244,15 +265,31 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
         IKSeFClient ksefClient = scope.ServiceProvider.GetRequiredService<IKSeFClient>();
         ICryptographyService cryptographyService = await GetCryptographicService(scope, cancellationToken).ConfigureAwait(false);
 
-        OpenBatchSessionResult result = await PrepareAndOpenBatchSessionAsync(invoices, ksefClient, cryptographyService, accessToken).ConfigureAwait(false);
+        // Retrying is only ever triggered by HTTP 429, which means KSeF rejected the request
+        // before acting on it, so no step below can be performed twice by a retry.
+        ILimitsClient? limitsClient = NoLocalRateLimit
+            ? null
+            : scope.ServiceProvider.GetRequiredService<ILimitsClient>();
+
+        OpenBatchSessionResult result = await PrepareAndOpenBatchSessionAsync(
+            invoices, ksefClient, cryptographyService, accessToken, limitsClient, cancellationToken)
+            .ConfigureAwait(false);
         string referenceNumber = result.ReferenceNumber;
         Log.Information($"ReferenceNumber={result.ReferenceNumber}");
 
+        // Not rate limited: the parts go to the storage URLs handed out by OpenBatch, not to the
+        // KSeF API surface that enforces the limits.
         Log.Information("5. Przesłanie zadeklarowanych części paczki");
         await ksefClient.SendBatchPartsAsync(result.OpenBatchSessionResponse, result.EncryptedParts).ConfigureAwait(false);
 
         Log.Information("6. Zamknięcie sesji wsadowej");
-        await ksefClient.CloseBatchSessionAsync(result.ReferenceNumber, accessToken).ConfigureAwait(false);
+        await KsefRateLimitWrapper.ExecuteWithRetryAsync(
+            (_) => ksefClient.CloseBatchSessionAsync(result.ReferenceNumber, accessToken),
+            KsefApiEndpoint.SessionBatchClose,
+            limitsClient,
+            RetryAttempts,
+            accessToken,
+            cancellationToken).ConfigureAwait(false);
 
         /* ---------------------------------------------------------------------- */
         Log.Information("sesja-sprawdzenie-stanu-i-pobranie-upo.md");
@@ -260,8 +297,16 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
         Log.Information("4) Oczekiwanie na przetworzenie faktury");
         SessionStatusResponse sessionStatus;
         try {
+            // By this point the invoices are already submitted, so a 429 here must not become an
+            // unhandled exception: that would lose the outcome of a batch that KSeF has accepted.
             sessionStatus = await AsyncPollingUtils.PollWithBackoffAsync(
-                action: () => ksefClient.GetSessionStatusAsync(referenceNumber, accessToken, cancellationToken),
+                action: () => KsefRateLimitWrapper.ExecuteWithRetryAsync(
+                    (ct) => ksefClient.GetSessionStatusAsync(referenceNumber, accessToken, ct),
+                    KsefApiEndpoint.SessionInvoiceStatus,
+                    limitsClient,
+                    RetryAttempts,
+                    accessToken,
+                    cancellationToken),
                 IsTerminal,
                 initialDelay: TimeSpan.FromSeconds(1),
                 maxDelay: TimeSpan.FromSeconds(5),
@@ -276,7 +321,9 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
         }
 
         Log.Information("3. Pobranie informacji na temat przesłanych faktur");
-        await PobranieInformacjiNaTematPrzeslanychFaktur(ksefClient, referenceNumber, accessToken, cancellationToken).ConfigureAwait(false);
+        await PobranieInformacjiNaTematPrzeslanychFaktur(
+            ksefClient, referenceNumber, accessToken, limitsClient, RetryAttempts, cancellationToken)
+            .ConfigureAwait(false);
 
         if (!string.IsNullOrEmpty(UpoDir)) {
             Directory.CreateDirectory(UpoDir);
@@ -285,7 +332,13 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
                 // Zbiorcze UPO
                 foreach (UpoPageResponse? upo in sessionStatus.Upo.Pages) {
                     Log.Information($"Pobieranie zbiorczego UPO: {upo.ReferenceNumber}");
-                    string upoContent = await ksefClient.GetSessionUpoAsync(referenceNumber, upo.ReferenceNumber, accessToken, cancellationToken).ConfigureAwait(false);
+                    string upoContent = await KsefRateLimitWrapper.ExecuteWithRetryAsync(
+                        (ct) => ksefClient.GetSessionUpoAsync(referenceNumber, upo.ReferenceNumber, accessToken, ct),
+                        KsefApiEndpoint.Other,
+                        limitsClient,
+                        RetryAttempts,
+                        accessToken,
+                        cancellationToken).ConfigureAwait(false);
                     string upoPath = Path.Combine(UpoDir,
                         SafePath.SafeFileNameLogged($"uposesji-{upo.ReferenceNumber}") + ".xml");
                     File.WriteAllText(upoPath, XDocument.Parse(upoContent).ToString() + "\n");
@@ -301,17 +354,29 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
             const int pageSize = 50;
             string? continuationtoken = null;
             do {
-                SessionInvoicesResponse sessionInvoices = await ksefClient
-                   .GetSessionInvoicesAsync(
-                       referenceNumber,
-                       accessToken,
-                       pageSize,
-                       continuationtoken,
-                       cancellationToken).ConfigureAwait(false);
+                string? pageToken = continuationtoken;
+                SessionInvoicesResponse sessionInvoices = await KsefRateLimitWrapper.ExecuteWithRetryAsync(
+                    (ct) => ksefClient.GetSessionInvoicesAsync(
+                        referenceNumber,
+                        accessToken,
+                        pageSize,
+                        pageToken,
+                        ct),
+                    KsefApiEndpoint.SessionInvoiceStatus,
+                    limitsClient,
+                    RetryAttempts,
+                    accessToken,
+                    cancellationToken).ConfigureAwait(false);
 
                 foreach (SessionInvoice? invoice in sessionInvoices.Invoices.Where(i => i.KsefNumber is not null)) {
                     Log.Information($"Pobieranie indywidualnego UPO dla faktury: {invoice.KsefNumber}");
-                    string upoContent = await ksefClient.GetSessionInvoiceUpoByKsefNumberAsync(referenceNumber, invoice.KsefNumber, accessToken, cancellationToken).ConfigureAwait(false);
+                    string upoContent = await KsefRateLimitWrapper.ExecuteWithRetryAsync(
+                        (ct) => ksefClient.GetSessionInvoiceUpoByKsefNumberAsync(referenceNumber, invoice.KsefNumber, accessToken, ct),
+                        KsefApiEndpoint.Other,
+                        limitsClient,
+                        RetryAttempts,
+                        accessToken,
+                        cancellationToken).ConfigureAwait(false);
                     string upoPath = Path.Combine(UpoDir,
                         SafePath.SafeFileNameLogged($"upo-{invoice.KsefNumber}") + ".xml");
                     File.WriteAllText(upoPath, XDocument.Parse(upoContent).ToString() + "\n");

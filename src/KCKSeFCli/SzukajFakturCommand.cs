@@ -7,12 +7,22 @@ using KSeF.Client.Core.Interfaces.Clients;
 using KSeF.Client.Core.Models.Invoices;
 using KSeF.Client.Core.Models.Invoices.Common;
 
+using KCKSeFCli.Utils;
+
 using Microsoft.Extensions.DependencyInjection;
 
 namespace KCKSeFCli;
 
 [Verb("SzukajFaktur", HelpText = "Query invoice metadata")]
 public class SzukajFakturCommand : IWithConfigCommand {
+    // Declared here rather than on PobierzFaktury so that the paginated metadata query below is
+    // rate limited too. PobierzFaktury inherits both.
+    [Option("retry-attempts", Default = 5, HelpText = "Liczba ponownych prób po przekroczeniu limitu zapytań (HTTP 429).")]
+    public int RetryAttempts { get; set; }
+
+    [Option("no-local-rate-limit", HelpText = "Wyłącz lokalne ograniczanie liczby zapytań do API.")]
+    public bool NoLocalRateLimit { get; set; }
+
     [Option('s', "subjectType", Default = "Subject1", HelpText = """
     Typ podmiotu, którego dotyczą kryteria filtrowania metadanych faktur. Określa kontekst, w jakim przeszukiwane są dane.
     Wartość                 | Opis
@@ -254,14 +264,28 @@ public class SzukajFakturCommand : IWithConfigCommand {
         PagedInvoiceResponse pagedInvoicesResponse;
         int currentPageOffset = settings.PageOffset;
 
+        // Every extra page is another API call, so an unbounded search is exactly the workload
+        // that trips KSeF's limits. Back off locally and retry on 429 instead of failing the
+        // whole query on one throttled page.
+        ILimitsClient? limitsClient = settings.NoLocalRateLimit
+            ? null
+            : scope.ServiceProvider.GetRequiredService<ILimitsClient>();
+
         do {
             Log.Information($"Fetching page with offset {currentPageOffset} and size {settings.PageSize}");
-            pagedInvoicesResponse = await ksefClient.QueryInvoiceMetadataAsync(
-                invoiceQueryFilters,
+            int pageOffset = currentPageOffset;
+            pagedInvoicesResponse = await KsefRateLimitWrapper.ExecuteWithRetryAsync(
+                (ct) => ksefClient.QueryInvoiceMetadataAsync(
+                    invoiceQueryFilters,
+                    accessToken,
+                    pageOffset: pageOffset,
+                    pageSize: settings.PageSize,
+                    cancellationToken: ct),
+                KsefApiEndpoint.InvoiceQueryMetadata,
+                limitsClient,
+                settings.RetryAttempts,
                 accessToken,
-                pageOffset: currentPageOffset,
-                pageSize: settings.PageSize,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
 
             if (pagedInvoicesResponse.Invoices != null) {
                 allInvoices.AddRange(pagedInvoicesResponse.Invoices);

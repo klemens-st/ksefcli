@@ -73,6 +73,32 @@ public static class KsefRateLimitWrapper
         throw new InvalidOperationException($"Nieoczekiwane zakończenie pętli powtórzeń dla {endpoint}");
     }
 
+    /// <summary>
+    /// Wariant dla wywołań bez wartości zwracanej (np. SendBatchPartsAsync, CloseBatchSessionAsync).
+    /// Nie jest częścią oryginalnego pliku upstream — dodany, aby ścieżka wysyłki wsadowej
+    /// też mogła korzystać z lokalnego ograniczania i ponawiania.
+    /// </summary>
+    public static async Task ExecuteWithRetryAsync(
+        Func<CancellationToken, Task> ksefApiCall,
+        KsefApiEndpoint endpoint,
+        ILimitsClient? limitsClient = null,
+        int maxRetryAttempts = DefaultMaxRetryAttempts,
+        string? accessToken = null,
+        CancellationToken cancellationToken = default)
+    {
+        await ExecuteWithRetryAsync<bool>(
+            async ct =>
+            {
+                await ksefApiCall(ct).ConfigureAwait(false);
+                return true;
+            },
+            endpoint,
+            limitsClient,
+            maxRetryAttempts,
+            accessToken,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private static readonly ConcurrentDictionary<KsefApiEndpoint, EndpointRateTracker> Trackers = new();
 
     private static async Task<ApiLimits> ResolveApiLimitsAsync(
