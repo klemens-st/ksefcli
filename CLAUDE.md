@@ -64,8 +64,13 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 - Each security fix has a regression test whose file header explains what it defends against.
 - `L_unittest_cmd` calls `hash` on argv[0], so it **cannot run a shell function** — it registers
   a failed assertion instead. Use `L_unittest_success` / `L_unittest_failure` for those.
-- `L_unittest_cmd -v` captures stdout only; add `-j` to also capture stderr. Combining a leading
-  `!` with `-e N` cancels out — `!` already inverts the status before the comparison.
+- `L_unittest_cmd -v` captures stdout only **for a plain command**; add `-j` to also capture
+  stderr. A **leading `!` changes this**: `-v output ! cmd` captures both streams even without
+  `-j`. Verified by probe, and it matters — the two production-gate tests grep a stderr-only
+  message out of a `-v` capture and do work. Combining a leading `!` with `-e N` cancels out —
+  `!` already inverts the status before the comparison.
+- **`-k` must come before the binary path.** `exe nargs=remainder` swallows everything after it,
+  so `unit.sh ./dist/kcksefcli -k foo` passes `-k` to the CLI as a verb and every test fails.
 - To test config-dependent behaviour offline, add a profile to `tests/test_kcksefcli.yaml`
   (e.g. `token_prod`). The confirmation gate runs before authentication, so a fake token never
   leaves the machine.

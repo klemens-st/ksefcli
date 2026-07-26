@@ -206,6 +206,46 @@ clitest_dodaj_pozycje_brak_pol_sumujacych() {
     L_unittest_cmd -I ! test -e out.xml
 }
 
+# OPEN FINDING — fails against the current tree; passes once P_12 is written normalised.
+#
+# InvoiceTotals.BandForRate deliberately tolerates a trailing "%" and surrounding space, and
+# InvoiceTotalsTests pins that. DodajPozycjeNaFakturze uses it for the band lookup but then
+# writes P_12 from the raw --stawka-vat, so "23%" totals correctly into P_13_1/P_14_1/P_15 and
+# is emitted verbatim into an element whose type (TStawkaPodatku) is a closed enumeration.
+# The file is written before validation runs, so the command leaves invalid XML on disk.
+clitest_dodaj_pozycje_stawka_z_procentem() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    L_unittest_cmd cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Pozycja 23%" --miara "szt" --ilosc 1 --cena-netto 100.00 --stawka-vat '23%'
+
+    # P_12 must carry the enumeration value, not whatever the operator typed.
+    local p12
+    L_unittest_cmd -v p12 cli XMLExtract out.xml "/Faktura/Fa/FaWiersz[last()]/P_12"
+    L_unittest_vareq p12 "23"
+
+    # And the totals must still be the ones the normalised rate implies.
+    local p13_1 p14_1
+    L_unittest_cmd -v p13_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_1"
+    L_unittest_cmd -v p14_1 cli XMLExtract out.xml "/Faktura/Fa/P_14_1"
+    L_unittest_vareq p13_1 "1766.66"
+    L_unittest_vareq p14_1 "406.33"
+}
+
+# OPEN FINDING — fails against the current tree; passes once the HelpText stops offering 0.
+#
+# 0% has no P_13_x/P_14_x pair, so the command refuses it (clitest_dodaj_pozycje_stawka_
+# nieobslugiwana pins the refusal). Advertising it in --help sends the operator straight into
+# that refusal. The repo convention also asks for Polish HelpText on any option touched.
+clitest_dodaj_pozycje_help_nie_obiecuje_stawki_zero() {
+    local output
+    L_unittest_cmd -v output cli DodajPozycjeNaFakturze --help
+    local stawka_line
+    stawka_line=$(grep -- "--stawka-vat" <<<"$output" || true)
+    [[ -n "$stawka_line" ]] || fatal "No --stawka-vat line in the help output"
+    L_unittest_cmd -I ! grep -qE '(^|[ ,])0([ ,.]|$)' <<<"$stawka_line"
+}
+
 clitest_nowa_faktura() {
     L_with_cd_tmpdir
     L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice.yaml invoice.xml
@@ -235,6 +275,39 @@ clitest_nowa_faktura_stawka_ryczalt() {
     L_unittest_vareq p14_4 "4.00"
     # P_15 must equal the sum of the bands it reports.
     L_unittest_vareq p15 "1334.00"
+}
+
+# OPEN FINDING — fails against the current tree; passes once a negative band is still emitted.
+#
+# GenerateXml skips P_13_x/P_14_x for any merged band whose net is <= 0, but totalGross is
+# accumulated from every position unconditionally. A rabat that drives one band negative
+# therefore vanishes from the summary while still moving P_15. In this fixture the 23% band
+# nets to -500.00 + -115.00 VAT and is dropped, leaving components that sum to 105.00 against
+# a stated P_15 of -510.00. XSD validation passes either way — it does not check the totals.
+#
+# A band that nets to exactly zero is harmless (it contributes nothing to either side), so the
+# guard wants to be < 0, not <= 0 — or to go away entirely.
+clitest_nowa_faktura_rabat_ujemne_pasmo() {
+    L_with_cd_tmpdir
+    L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice_rabat.yaml out.xml
+
+    local p13_1 p14_1 p13_3 p14_3 p15
+    # 615.00 - 1230.00 = -615.00 gross at 23%, i.e. -500.00 net and -115.00 VAT.
+    L_unittest_cmd -v p13_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_1"
+    L_unittest_cmd -v p14_1 cli XMLExtract out.xml "/Faktura/Fa/P_14_1"
+    L_unittest_vareq p13_1 "-500.00"
+    L_unittest_vareq p14_1 "-115.00"
+
+    # The untouched band stays as it was.
+    L_unittest_cmd -v p13_3 cli XMLExtract out.xml "/Faktura/Fa/P_13_3"
+    L_unittest_cmd -v p14_3 cli XMLExtract out.xml "/Faktura/Fa/P_14_3"
+    L_unittest_vareq p13_3 "100.00"
+    L_unittest_vareq p14_3 "5.00"
+
+    # The whole point: P_15 must equal the sum of the bands the invoice actually reports.
+    # -500.00 + -115.00 + 100.00 + 5.00 = -510.00.
+    L_unittest_cmd -v p15 cli XMLExtract out.xml "/Faktura/Fa/P_15"
+    L_unittest_vareq p15 "-510.00"
 }
 
 clitest_nowa_faktura_nip_lookup() {
@@ -323,7 +396,14 @@ clitest_prod_upload_allowed_with_yes() {
     local output
     # --yes gets past the gate. The command then fails at authentication with a fake token,
     # which is the proof that the gate is no longer what stopped it.
-    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output \
+    #
+    # -j is belt and braces, not a fix: the refusal goes to stderr, and a bare -v captures
+    # stdout only — but only for a plain command. With a leading "!", as here, L_unittest_cmd
+    # merges both streams, so this assertion was already looking at the refusal. Verified by
+    # sabotaging DangerousOperation.Evaluate to refuse unconditionally: this test fails against
+    # that binary with or without -j. Stating -j explicitly means the coverage no longer
+    # depends on the "!" being present.
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output \
         ! cli PrzeslijFaktury --yes -a token_prod "$DIR/FA_3_Przykład_1.xml" </dev/null || true
     L_unittest_cmd -I ! grep -q "Odmowa" <<<"$output"
 }
@@ -331,9 +411,31 @@ clitest_prod_upload_allowed_with_yes() {
 clitest_test_env_upload_not_gated() {
     local output
     # Non-production must not be gated at all, otherwise agents cannot work unattended.
-    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output \
+    # -j for the same reason as above: explicit rather than relying on the "!" merging streams.
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output \
         ! cli PrzeslijFaktury -a token_test "$DIR/FA_3_Przykład_1.xml" </dev/null || true
     L_unittest_cmd -I ! grep -q "Odmowa" <<<"$output"
+}
+
+# OPEN FINDING — fails against the current tree; passes once --retry-attempts is bounded.
+#
+# --retry-attempts is a plain int with no lower bound on both PrzeslijFaktury and SzukajFaktur
+# (PobierzFaktury inherits the latter). ExecuteWithRetryAsync loops `for (attempt = 1; attempt
+# <= maxRetryAttempts; ...)`, so at 0 the body never runs and it falls through to
+# `throw new InvalidOperationException("Nieoczekiwane zakończenie pętli powtórzeń dla ...")`,
+# which Program.cs reports as exit 3 with a stack trace and no mention of the flag at fault.
+#
+# Note this test currently attempts authentication before getting anywhere near the retry loop,
+# so until it is fixed it makes a network call. The fix is to reject the value at parse time,
+# which is also what makes this test offline: it must fail before any authentication happens.
+clitest_retry_attempts_zero_odrzucone() {
+    local output
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \
+        cli PrzeslijFaktury -a token_test --retry-attempts 0 "$DIR/FA_3_Przykład_1.xml" </dev/null
+    # The operator has to be told which option they got wrong.
+    L_unittest_cmd -I grep -q "retry-attempts" <<<"$output"
+    # A bad argument is an ordinary failure, not an unhandled exception.
+    L_unittest_cmd -I ! grep -q "at KCKSeFCli" <<<"$output"
 }
 
 clitest_prod_revoke_refused_without_terminal() {
