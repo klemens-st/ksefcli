@@ -46,7 +46,10 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
    registered details breaks the test without anything being wrong here. Check the API response
    before hunting for a bug in our code.
 6. **`.format_check` in `.gitlab-ci.yml` never runs** — leading dot makes it a template job.
-7. `tests/L_lib.sh` is downloaded at test time and gitignored. Don't commit it.
+7. `tests/L_lib.sh` is downloaded at test time and gitignored. Don't commit it. It is verified
+   against a SHA-256 pin before sourcing, so `sha256sum` is now required to run the CLI suite.
+8. **`-k` in `tests/unit.sh` takes one regex, not an alternation** — `-k 'a|b'` matches nothing
+   and reports "No tests matched" rather than erroring.
 
 ## Test conventions
 
@@ -56,8 +59,15 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
   `ArgumentNullException` — `Log.Logger` stays null until a command configures it.
 - Pattern for command logic: **extract the decision into a pure static function**, test that
   directly. Avoids needing a mocked `IKSeFClient` or DI container. Used by
-  `PrzeslijFakturyCommand.DetermineOutcome`, `SafePath.SafeFileName`, `PrintConfigCommand.Redact`.
+  `PrzeslijFakturyCommand.DetermineOutcome`, `SafePath.SafeFileName`, `PrintConfigCommand.Redact`,
+  `DangerousOperation.Evaluate`, `InvoiceTotals`.
 - Each security fix has a regression test whose file header explains what it defends against.
+- `L_unittest_cmd` calls `hash` on argv[0], so it **cannot run a shell function** — it registers
+  a failed assertion instead. Use `L_unittest_success` / `L_unittest_failure` for those.
+- `L_unittest_cmd -v` captures stdout only; add `-j` to also capture stderr. Combining a leading
+  `!` with `-e N` cancels out — `!` already inverts the status before the comparison.
+- When a test claims to pin a bug fix, **run it against the pre-fix binary** and confirm it
+  fails there. Two of this repo's fixes had first-draft tests that passed either way.
 
 ## Security invariants — do not undo
 
@@ -78,8 +88,35 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
 - KSeF-supplied identifiers go through `SafePath.SafeFileName` before use as filenames.
   `Path.Combine` discards its first argument if the second is rooted.
 - **`SelfUpdate` was removed deliberately** — no stable artifact to pin. Don't reinstate.
+- `tests/lib.sh` **pins `L_lib.sh` by SHA-256** (`L_lib_sha256`) and verifies before sourcing.
+  A cached or PATH copy that does not match is re-fetched, never sourced. Bumping the release
+  URL without the hash fails `clitest_l_lib_matches_pinned_sha256`.
+- `DangerousOperation` gates `PrzeslijFaktury`/`NowyCertyfikat`/`UniewaznijCertyfikat` in
+  production. **Production + non-interactive + no `--yes` is a refusal** — that default is the
+  whole protection, since an agent cannot answer a prompt. Unknown environment names count as
+  production. Policy: `docs/BezpieczenstwoAgentow.md`.
+- Retries fire **only on HTTP 429**, which KSeF returns before acting, so no wrapped call can
+  be performed twice. `SendBatchPartsAsync` is deliberately unwrapped (storage URLs, not the
+  rate-limited API).
 - Platform-gated APIs need `[UnsupportedOSPlatformGuard("windows")]` on the guard property, or
   CA1416 fails the build; a plain `bool` property is not enough for the analyzer.
+
+## Money math
+
+`Utils/InvoiceTotals.cs` owns it; don't reimplement per-command.
+
+- FA(3) has a **net/VAT field pair per rate band**: 22/23 → `P_13_1`/`P_14_1`, 7/8 → `_2`,
+  5 → `_3`, 4 → `_4`. Handling only 22/23 was a real defect in two commands — other bands were
+  silently dropped while `P_15` moved, so the invoice did not add up.
+- Rates with **no pair at all** (0%, zw, np, oo) record their net elsewhere. Refuse rather than
+  assume zero VAT.
+- Round **once, before the value reaches any total**, away from zero (`Math.Round` defaults to
+  banker's rounding). VAT is computed on the **band total**, not per line, or rounding error
+  accumulates.
+- `WystawKorekte` replaces a corrected line with a negated copy plus the corrected one, so that
+  band holds the **difference** while untouched lines keep their full value. Pre-existing
+  semantic, encoded in `tests/expected_korekta.xml`. Don't "fix" it without deciding what a KOR
+  invoice should state.
 
 ## Conventions
 
