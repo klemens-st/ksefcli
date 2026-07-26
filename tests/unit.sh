@@ -36,8 +36,20 @@ clitest_profile_inline() {
 
 clitest_profile_cmd_pw() {
     local output
-    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output cli PrintConfig --active cert_cmd_password_test
+    # --reveal, because PrintConfig redacts secrets by default and this test exists to check
+    # that password_cmd is resolved at all.
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output cli PrintConfig --reveal --active cert_cmd_password_test
     L_unittest_cmd -I grep -q "cmd_password_output" <<<"$output"
+}
+
+clitest_profile_cmd_pw_redacted_by_default() {
+    local output
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output cli PrintConfig --active cert_cmd_password_test
+    # The resolved secrets must not be printed. cmd_password_output still shows up inside
+    # password_cmd, which is deliberately kept because it says where the secret comes from
+    # without disclosing it, so match the resolved fields themselves.
+    L_unittest_cmd -I grep -qx "    password: <redacted>" <<<"$output"
+    L_unittest_cmd -I grep -qx "    private_key: <redacted>" <<<"$output"
 }
 
 clitest_profile_cmd_pw_conflict() {
