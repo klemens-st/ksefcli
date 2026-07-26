@@ -89,7 +89,7 @@ W tym przykładzie:
 ## Pamięć podręczna (Cache)
 
 Domyślnie `kcksefcli` stosuje mechanizm pamięci podręcznej (cache) dla tokenów sesyjnych.
-Po pomyślnym uwierzytelnieniu (np. przez polecenia `Auth`, `TokenAuth` lub `CertAuth`), nowo uzyskany token sesyjny jest bezpiecznie zapisywany w lokalnym pliku cache. Przy kolejnych wywołaniach komend, narzędzie w pierwszej kolejności próbuje odczytać i wykorzystać już zapisany token, aby uniknąć konieczności powtarzania procesu logowania. Zmniejsza to liczbę zapytań do serwerów KSeF, przyspiesza działanie narzędzia oraz zmniejsza ryzyko przekroczenia limitów zapytań API.
+Po pomyślnym uwierzytelnieniu (np. przez polecenia `Auth`, `TokenAuth` lub `CertAuth`), nowo uzyskany token sesyjny jest zapisywany w lokalnym pliku cache. Przy kolejnych wywołaniach komend, narzędzie w pierwszej kolejności próbuje odczytać i wykorzystać już zapisany token, aby uniknąć konieczności powtarzania procesu logowania. Zmniejsza to liczbę zapytań do serwerów KSeF, przyspiesza działanie narzędzia oraz zmniejsza ryzyko przekroczenia limitów zapytań API.
 Tokeny są również automatycznie odświeżane w tle, gdy system wykryje, że zbliża się koniec ich ważności.
 
 ### Lokalizacja pliku
@@ -97,6 +97,24 @@ Tokeny są również automatycznie odświeżane w tle, gdy system wykryje, że z
 Domyślna lokalizacja pliku, w którym przechowywane są tokeny sesyjne, to:
 - W systemach Linux / macOS: `$HOME/.cache/kcksefcli/tokenstore.json`
 - W systemach Windows: `%LOCALAPPDATA%\kcksefcli\tokenstore.json`
+
+### Uprawnienia do pliku
+
+**Tokeny są przechowywane jawnym tekstem** — plik cache zawiera zarówno token dostępowy, jak i
+token odświeżający, w postaci nadającej się do bezpośredniego użycia. Każdy, kto odczyta ten
+plik, może wystawiać faktury w Twoim imieniu do czasu wygaśnięcia tokenów.
+
+Dlatego w systemach uniksowych plik jest tworzony z uprawnieniami `0600` (odczyt i zapis
+wyłącznie dla właściciela), a katalog — o ile to `kcksefcli` go zakłada — z uprawnieniami
+`0700`. Uprawnienia są nadawane w momencie tworzenia pliku, nie po zapisie, więc token nigdy
+nie trafia do pliku dostępnego dla innych użytkowników. Plik pozostały po starszej wersji
+narzędzia zostaje przy najbliższym uruchomieniu naprawiony, z odpowiednim ostrzeżeniem.
+
+Jeżeli wskażesz opcją `--cache` istniejący katalog, jego uprawnienia nie są zmieniane — może
+on należeć do kogoś innego. Zamiast tego pojawi się ostrzeżenie. Sam plik i tak pozostaje
+ograniczony do właściciela.
+
+Jeśli tokeny nie mają być zapisywane na dysku w ogóle, użyj `--no-tokencache`.
 
 ### Opcje Cache'owania i konfiguracji
 

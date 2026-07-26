@@ -44,9 +44,79 @@ public class TokenStore {
     private readonly string _path;
     private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 
+#if NET7_0_OR_GREATER
+    /// <summary>0600 - the store holds bearer and refresh tokens in cleartext.</summary>
+    public const UnixFileMode SecretFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+    /// <summary>0700, applied only to directories we create ourselves.</summary>
+    public const UnixFileMode SecretDirectoryMode =
+        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
+    private const UnixFileMode ModesBeyondOwner =
+        UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+        UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+#endif
+
+    /// <summary>
+    /// Whether this platform has POSIX permission bits to enforce. Windows ACLs already deny
+    /// other users access to a file under the profile directory, so there is nothing to do there.
+    /// </summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatformGuard("windows")]
+    public static bool UnixPermissionsApply =>
+#if NET7_0_OR_GREATER
+        !OperatingSystem.IsWindows();
+#else
+        false;
+#endif
+
+    /// <summary>
+    /// Creates the store's directory and file with owner-only permissions before anything is
+    /// written to them.
+    ///
+    /// The file is created with its mode set atomically, never chmod'd after the fact, so there
+    /// is no window in which a token sits in a world-readable file. An existing file created by
+    /// an older build is repaired and the repair is logged.
+    ///
+    /// An existing directory is left alone deliberately. The path is caller-supplied via
+    /// --cache, so it may be shared, and tightening it could lock other users out of something
+    /// that is not ours. It is also not load-bearing: directory permissions govern listing and
+    /// traversal, not reads of a 0600 file inside.
+    /// </summary>
+    public static void PrepareSecureStore(string path) {
+        string directory = Path.GetDirectoryName(path)!;
+#if NET7_0_OR_GREATER
+        if (UnixPermissionsApply) {
+            if (!Directory.Exists(directory)) {
+                Directory.CreateDirectory(directory, SecretDirectoryMode);
+            } else if ((File.GetUnixFileMode(directory) & ModesBeyondOwner) != 0) {
+                Log.Warning($"Token cache directory {directory} is accessible to other users. "
+                            + "The cache file itself is restricted to you.");
+            }
+
+            try {
+                // Atomic: the file never exists with a wider mode, not even briefly. CreateNew
+                // rather than a File.Exists check, so a concurrent creator cannot slip through.
+                using FileStream _ = new(path, new FileStreamOptions {
+                    Mode = System.IO.FileMode.CreateNew,
+                    Access = FileAccess.Write,
+                    UnixCreateMode = SecretFileMode,
+                });
+            } catch (IOException) when (File.Exists(path)) {
+                // Already there, possibly from a build that predates this. Repair it.
+                if ((File.GetUnixFileMode(path) & ModesBeyondOwner) != 0) {
+                    Log.Warning($"Token cache {path} was accessible to other users. Restricting it to you.");
+                    File.SetUnixFileMode(path, SecretFileMode);
+                }
+            }
+            return;
+        }
+#endif
+        Directory.CreateDirectory(directory);
+    }
+
     public TokenStore(string path) {
         _path = Environment.ExpandEnvironmentVariables(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        PrepareSecureStore(_path);
         Log.Information($"Token store loaded from: {_path}");
     }
 
