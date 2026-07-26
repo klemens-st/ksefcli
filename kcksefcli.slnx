@@ -2,6 +2,9 @@
   <Folder Name="/src/">
     <Project Path="src/KCKSeFCli/KCKSeFCli.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj" />
+  </Folder>
   <Folder Name="/thirdparty/" />
   <Folder Name="/thirdparty/ksef-client-csharp/">
     <Project Path="thirdparty/ksef-client-csharp/KSeF.Client.ClientFactory/KSeF.Client.ClientFactory.csproj" />

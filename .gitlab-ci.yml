@@ -50,11 +50,13 @@ secret_detection:
 linux_build_and_unit_test:
   extends: .build
   script:
+    # C# unit and regression tests. Runs before publish so a failure fails fast.
+    - dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj -c Release
     - dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
     - mv -v ./dist/kcksefcli .
     - ldd ./kcksefcli
     - stat ./kcksefcli
-    # Run tests.
+    # Black-box CLI tests against the published binary.
     - time ./tests/unit.sh ./kcksefcli
   artifacts:
     paths:
