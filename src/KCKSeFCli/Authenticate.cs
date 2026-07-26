@@ -44,8 +44,10 @@ public static class Authenticate {
                 Type = AuthenticationTokenContextIdentifierType.Nip,
                 Value = config.Nip
             },
-            EncryptedToken = encryptedTokenB64,
-            AuthorizationPolicy = null
+            EncryptedToken = encryptedTokenB64
+            // AuthorizationPolicy left unset: it is an optional IP allowlist for the issued
+            // token, and omitting it keeps the previous unrestricted behaviour. In 2.7.0 the
+            // property became non-nullable, so an explicit null no longer compiles.
         };
         SignatureResponse signature = await ksefClient.SubmitKsefTokenAuthRequestAsync(request, new CancellationToken()).ConfigureAwait(false);
         Log.Information("3. Sprawdzenie statusu uwierzytelniania");
