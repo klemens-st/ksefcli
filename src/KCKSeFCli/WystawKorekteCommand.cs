@@ -4,6 +4,7 @@ using System.Xml.Linq;
 using CommandLine;
 
 using KCKSeFCli;
+using KCKSeFCli.Utils;
 
 namespace KCKSeFCli;
 
@@ -168,47 +169,47 @@ public class WystawKorekteCommand : IGlobalCommand {
         }
     }
 
+    /// <summary>
+    /// Przelicza sumy P_13_x / P_14_x / P_15 po zastosowaniu korekt.
+    ///
+    /// This used to handle rate 23 only, by its own admission. On an invoice with any other
+    /// band, P_15 was recalculated from every line while that band's P_13_x/P_14_x kept its
+    /// pre-correction value, so the correction silently did not add up.
+    /// </summary>
     private void RecalculateTotals(XElement fa, XNamespace ns) {
-        Dictionary<string, (decimal Netto, decimal Vat)> summary = new Dictionary<string, (decimal Netto, decimal Vat)>();
+        List<(string? Rate, decimal Net)> lines = fa.Elements(ns + "FaWiersz")
+            .Select(wiersz => (
+                Rate: wiersz.Element(ns + "P_12")?.Value,
+                Net: InvoiceTotals.Parse(wiersz.Element(ns + "P_11")?.Value ?? "0")))
+            .Where(line => line.Rate is not null)
+            .ToList();
 
-        foreach (XElement wiersz in fa.Elements(ns + "FaWiersz")) {
-            string? stawkaVat = wiersz.Element(ns + "P_12")?.Value;
-            if (stawkaVat == null) {
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize(lines);
+
+        foreach (InvoiceTotals.BandTotal band in summary.Bands) {
+            XElement? netField = fa.Element(ns + band.Band.NetField);
+            XElement? vatField = fa.Element(ns + band.Band.VatField);
+            if (netField is null || vatField is null) {
+                // Inserting a missing pair means placing it correctly in the schema sequence,
+                // so say plainly that this band was not written rather than dropping it.
+                Log.Warning($"Faktura nie zawiera pól {band.Band.NetField}/{band.Band.VatField} "
+                            + $"dla stawki {band.Band.Percent}%; sumy tego pasma nie zostały "
+                            + "zaktualizowane. Sprawdź fakturę przed wysyłką.");
                 continue;
             }
-
-            decimal netto = decimal.Parse(wiersz.Element(ns + "P_11")?.Value ?? "0", CultureInfo.InvariantCulture);
-
-            decimal vatRateNumeric = 0;
-            if (decimal.TryParse(stawkaVat, out decimal rate)) {
-                vatRateNumeric = rate / 100;
-            }
-
-            decimal kwotaVat = netto * vatRateNumeric;
-
-            if (!summary.ContainsKey(stawkaVat)) {
-                summary[stawkaVat] = (0, 0);
-            }
-
-            summary[stawkaVat] = (summary[stawkaVat].Netto + netto, summary[stawkaVat].Vat + kwotaVat);
+            netField.Value = InvoiceTotals.Format(band.Net);
+            vatField.Value = InvoiceTotals.Format(band.Vat);
         }
 
-        // This is a simplified implementation. A full implementation would need to map
-        // VAT rates ("23", "8", "zw", etc.) to the correct P_13_x and P_14_x elements.
-        // For now, we only handle a few common rates.
-
-        XElement? p13_1 = fa.Element(ns + "P_13_1");
-        XElement? p14_1 = fa.Element(ns + "P_14_1");
-        if (p13_1 != null && p14_1 != null && summary.TryGetValue("23", out (decimal Netto, decimal Vat) sums23)) {
-            p13_1.Value = sums23.Netto.ToString("F2", CultureInfo.InvariantCulture);
-            p14_1.Value = sums23.Vat.ToString("F2", CultureInfo.InvariantCulture);
+        if (summary.UnsupportedRates.Count > 0) {
+            Log.Warning($"Pozycje ze stawkami {string.Join(", ", summary.UnsupportedRates)} "
+                        + "nie mają pary pól P_13_x/P_14_x. Ich wartość netto wchodzi do P_15, "
+                        + "ale odpowiednie pola sumujące trzeba uzupełnić ręcznie.");
         }
 
         XElement? p15 = fa.Element(ns + "P_15");
-        if (p15 != null) {
-            decimal totalNetto = summary.Values.Sum(v => v.Netto);
-            decimal totalVat = summary.Values.Sum(v => v.Vat);
-            p15.Value = (totalNetto + totalVat).ToString("F2", CultureInfo.InvariantCulture);
+        if (p15 is not null) {
+            p15.Value = InvoiceTotals.Format(summary.TotalNet + summary.TotalVat);
         }
     }
 }

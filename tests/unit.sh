@@ -347,6 +347,42 @@ clitest_l_lib_matches_pinned_sha256() {
     L_unittest_success verify_sha256 "${L_lib_path:-}" "${L_lib_sha256:-}"
 }
 
+# A correction on an invoice that uses more than one VAT band. RecalculateTotals handled rate
+# 23 only, so P_15 was recalculated from every line while P_13_3/P_14_3 kept its
+# pre-correction value and the correction did not add up.
+#
+# FA_3_Przykład_1.xml has 1626.01 + 40.65 at 23% and one 5% line of 1 x 0.95. The correction
+# targets the 5% line, because that is what the old code could not do: it wrote P_13_1/P_14_1
+# only, so P_13_3/P_14_3 kept its pre-correction 0.95/0.05 while P_15 moved. The invoice then
+# did not add up — its own components summed to 2050.99 against a stated total of 2069.94.
+#
+# Note the pre-existing correction semantic this pins: a corrected line is replaced by a
+# negated copy plus the corrected one, so its band holds the *difference*, while untouched
+# lines keep their full value. That mix is what tests/expected_korekta.xml already encodes;
+# this change only fixed which fields get written and how they round.
+clitest_wystawkorekte_wiele_stawek() {
+    L_with_cd_tmpdir
+    L_unittest_cmd cli WystawKorekte "$DIR/FA_3_Przykład_1.xml" out.xml 3 21 \
+        --PrzyczynaKorekty "Korekta ilości" --no-validate
+
+    local p13_1 p14_1 p13_3 p14_3 p15
+    L_unittest_cmd -v p13_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_1"
+    L_unittest_cmd -v p14_1 cli XMLExtract out.xml "/Faktura/Fa/P_14_1"
+    L_unittest_cmd -v p13_3 cli XMLExtract out.xml "/Faktura/Fa/P_13_3"
+    L_unittest_cmd -v p14_3 cli XMLExtract out.xml "/Faktura/Fa/P_14_3"
+    L_unittest_cmd -v p15 cli XMLExtract out.xml "/Faktura/Fa/P_15"
+
+    # 23% untouched: 1626.01 + 40.65 = 1666.66, VAT 383.3318 rounded to 383.33.
+    L_unittest_vareq p13_1 "1666.66"
+    L_unittest_vareq p14_1 "383.33"
+    # 5%: the line is replaced by -0.95 and 21 x 0.95 = 19.95, so the band holds 19.00.
+    # VAT 19.00 * 5% = 0.95. This is the band the old code left at 0.95/0.05.
+    L_unittest_vareq p13_3 "19.00"
+    L_unittest_vareq p14_3 "0.95"
+    # P_15 must equal the sum of the bands it reports: 1685.66 net + 384.28 VAT.
+    L_unittest_vareq p15 "2069.94"
+}
+
 ###############################################################################
 
 DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"

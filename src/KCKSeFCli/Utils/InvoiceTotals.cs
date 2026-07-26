@@ -74,4 +74,60 @@ public static class InvoiceTotals {
     /// <summary>Parsowanie kwoty z XML — zawsze kropka dziesiętna, niezależnie od locale.</summary>
     public static decimal Parse(string value) =>
         decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
+
+    /// <summary>Suma netto i VAT dla jednego pasma stawek.</summary>
+    public readonly record struct BandTotal(VatBand Band, decimal Net, decimal Vat);
+
+    /// <summary>
+    /// Podsumowanie pozycji faktury. <see cref="UnsupportedRates"/> wymienia stawki, których
+    /// nie da się przypisać do pary pól — wywołujący ma o nich wiedzieć, bo ich netto wchodzi
+    /// do sumy ogólnej, ale nie do żadnego P_13_x.
+    /// </summary>
+    public readonly record struct Summary(
+        IReadOnlyList<BandTotal> Bands,
+        IReadOnlyList<string> UnsupportedRates,
+        decimal TotalNet,
+        decimal TotalVat);
+
+    /// <summary>
+    /// Grupuje pozycje po paśmie stawek i liczy VAT raz od sumy netto pasma, a nie osobno dla
+    /// każdej pozycji. Zaokrąglanie każdej pozycji z osobna kumuluje błąd: trzy pozycje po
+    /// 0,33 zł przy 23% dają 0,24 zł zamiast poprawnych 0,23 zł.
+    /// </summary>
+    public static Summary Summarize(IEnumerable<(string? Rate, decimal Net)> lines) {
+        Dictionary<int, (VatBand Band, decimal Net)> byBand = new();
+        List<string> unsupported = new();
+        decimal unsupportedNet = 0m;
+
+        foreach ((string? rate, decimal net) in lines) {
+            VatBand? band = BandForRate(rate);
+            if (band is null) {
+                string label = rate ?? "";
+                if (!unsupported.Contains(label)) {
+                    unsupported.Add(label);
+                }
+                unsupportedNet += net;
+                continue;
+            }
+            int key = band.Value.Percent;
+            decimal running = byBand.TryGetValue(key, out (VatBand Band, decimal Net) existing)
+                ? existing.Net
+                : 0m;
+            byBand[key] = (band.Value, running + net);
+        }
+
+        List<BandTotal> bands = byBand.Values
+            .OrderByDescending(entry => entry.Band.Percent)
+            .Select(entry => new BandTotal(
+                entry.Band,
+                RoundMoney(entry.Net),
+                VatFor(RoundMoney(entry.Net), entry.Band.Percent)))
+            .ToList();
+
+        return new Summary(
+            bands,
+            unsupported,
+            bands.Sum(b => b.Net) + RoundMoney(unsupportedNet),
+            bands.Sum(b => b.Vat));
+    }
 }

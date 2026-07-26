@@ -103,6 +103,83 @@ public class InvoiceTotalsTests {
         Assert.Equal(expected, InvoiceTotals.RoundMoney(value));
     }
 
+    // Summarize backs WystawKorekte's RecalculateTotals, which carried a comment conceding it
+    // was "a simplified implementation" that only handled rate 23. On an invoice with any other
+    // band, P_15 was recalculated from every line while P_13_x/P_14_x for that band kept its
+    // pre-correction value, so the correction did not add up.
+    [Fact]
+    public void SummarizeGroupsLinesIntoTheirBands() {
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize([
+            ("23", -100.00m),
+            ("23", 500.00m),
+            ("5", 200.00m),
+        ]);
+
+        Assert.Equal(2, summary.Bands.Count);
+
+        InvoiceTotals.BandTotal band23 = summary.Bands.Single(b => b.Band.Percent == 23);
+        Assert.Equal(400.00m, band23.Net);
+        Assert.Equal(92.00m, band23.Vat);
+
+        InvoiceTotals.BandTotal band5 = summary.Bands.Single(b => b.Band.Percent == 5);
+        Assert.Equal(200.00m, band5.Net);
+        Assert.Equal(10.00m, band5.Vat);
+
+        Assert.Equal(600.00m, summary.TotalNet);
+        Assert.Equal(102.00m, summary.TotalVat);
+    }
+
+    [Fact]
+    public void SummarizeReportsRatesItCannotPlace() {
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize([
+            ("23", 100.00m),
+            ("zw", 50.00m),
+        ]);
+
+        // The caller has to decide what to do; silently dropping these is how totals drift.
+        Assert.Equal(["zw"], summary.UnsupportedRates);
+        // Net still counts toward the invoice total, but carries no VAT.
+        Assert.Equal(150.00m, summary.TotalNet);
+        Assert.Equal(23.00m, summary.TotalVat);
+    }
+
+    [Fact]
+    public void SummarizeComputesVatOnTheBandTotalNotPerLine() {
+        // Three lines of 0.33 at 23% are 0.0759 each. Rounding per line and summing gives 0.24;
+        // rounding the band total (0.2277) gives 0.23. The band total is the correct basis.
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize([
+            ("23", 0.33m),
+            ("23", 0.33m),
+            ("23", 0.33m),
+        ]);
+
+        Assert.Equal(0.99m, summary.Bands.Single().Net);
+        Assert.Equal(0.23m, summary.Bands.Single().Vat);
+    }
+
+    [Fact]
+    public void SummarizeTotalsAgreeWithTheBandsItReports() {
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize([
+            ("23", 0.33m),
+            ("5", 0.95m),
+            ("8", 12.34m),
+        ]);
+
+        // The invariant that keeps P_15 consistent with P_13_x/P_14_x.
+        Assert.Equal(summary.Bands.Sum(b => b.Net), summary.TotalNet);
+        Assert.Equal(summary.Bands.Sum(b => b.Vat), summary.TotalVat);
+    }
+
+    [Fact]
+    public void SummarizeHandlesNoLines() {
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize([]);
+
+        Assert.Empty(summary.Bands);
+        Assert.Empty(summary.UnsupportedRates);
+        Assert.Equal(0m, summary.TotalNet);
+        Assert.Equal(0m, summary.TotalVat);
+    }
+
     [Fact]
     public void LineNetIsRoundedBeforeItReachesTheTotals() {
         // 3 x 33.333 is 99.999, which must not carry a third decimal into the invoice.
