@@ -88,7 +88,7 @@ samego narzędzia.
 
 Wyszukiwanie numeru KSeF dla faktury o konkretnym numerze:
 ```bash
-$ kcksefcli SzukajFaktur -q -c kcksefcli.yaml --from "-1week" --to "now" --invoiceNumber '0004/26' | jq -r '.Invoices[0].KsefNumber'
+$ kcksefcli SzukajFaktur -q -c kcksefcli.yaml --from "-1week" --to "now" --invoiceNumber '0004/26' | jq -r '.[0].KsefNumber'
 12312312312-20260117-XXXXXXXXXXXX-5C
 ```
 
