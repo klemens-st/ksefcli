@@ -44,6 +44,15 @@
     <ProjectReference Include="../../thirdparty/ksef-client-csharp/KSeF.Client.ClientFactory/KSeF.Client.ClientFactory.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!--
+      The complete FA(3) schema import chain, vendored so validation never dereferences a
+      schemaLocation at runtime. schemat_FA(3) imports StrukturyDanych by absolute http:// URL,
+      which imports ElementarneTypyDanych, which includes KodyKrajow. All four are registered
+      explicitly in XmlValidator; see Resources/README.md for provenance.
+    -->
     <EmbeddedResource Include="Resources\schemat_FA(3)_v1-0E.xsd" />
+    <EmbeddedResource Include="Resources\StrukturyDanych_v10-0E.xsd" />
+    <EmbeddedResource Include="Resources\ElementarneTypyDanych_v10-0E.xsd" />
+    <EmbeddedResource Include="Resources\KodyKrajow_v10-0E.xsd" />
   </ItemGroup>
 </Project>
