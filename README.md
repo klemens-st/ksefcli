@@ -220,13 +220,20 @@ dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0
 ./tests/unit.sh ./dist/kcksefcli
 ```
 
-Stan oczekiwany: **98 testów C#** oraz **40 testów CLI**. Każda poprawka bezpieczeństwa ma
-własny test regresyjny — opis, czego dana poprawka broni, znajduje się w komentarzu na początku
-odpowiedniego pliku w `tests/KCKSeFCli.Tests/`.
+Stan oczekiwany: **98 testów C#** oraz **40 testów CLI**, wszystkie zielone przy działającym
+dostępie do sieci. Każda poprawka bezpieczeństwa ma własny test regresyjny — opis, czego dana
+poprawka broni, znajduje się w komentarzu na początku odpowiedniego pliku
+w `tests/KCKSeFCli.Tests/`.
 
-Dwa testy CLI wymagają dostępu do rządowego API `wl-api.mf.gov.pl`
-(`clitest_pobierz_info_o_nip` i `clitest_nowa_faktura_nip_lookup`). Za restrykcyjnym proxy
-będą one przechodzić na czerwono — to ograniczenie środowiska, nie regresja.
+Dwa testy CLI odpytują rządowe API `wl-api.mf.gov.pl` (`clitest_pobierz_info_o_nip`
+i `clitest_nowa_faktura_nip_lookup`) i bez dostępu do tego hosta kończą się błędem — to
+ograniczenie środowiska, nie regresja.
+
+Sprawdzają one przy tym **dane pobierane na żywo z rejestru**: `clitest_nowa_faktura_nip_lookup`
+oczekuje, że NIP `5260202588` rozwinie się dokładnie do `'KAMYK' SPÓŁKA Z OGRANICZONĄ
+ODPOWIEDZIALNOŚCIĄ`, `LITERACKA 21/24, 01-864 WARSZAWA`. Zmiana danych rejestrowych tej spółki
+zepsuje test, choć w kodzie nic nie będzie nie tak — zanim zaczniesz szukać błędu, sprawdź, co
+zwraca API.
 
 Testy w `tests/integration.sh` wymagają prawdziwych poświadczeń KSeF i celowo kończą się
 błędem bez nich. Konfigurację umieść w `secrets/kcksefcli.yaml` albo

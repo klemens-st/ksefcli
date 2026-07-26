@@ -38,8 +38,13 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 3. **`TreatWarningsAsErrors=true`** — any new warning fails the build.
 4. **~100 `NU1903` warnings are expected**, from the submodule declaring a vulnerable
    `System.Security.Cryptography.Xml`. Not breakage.
-5. **Two CLI tests need `wl-api.mf.gov.pl`** (`clitest_pobierz_info_o_nip`,
-   `clitest_nowa_faktura_nip_lookup`). They fail behind a restrictive proxy; not regressions.
+5. **Two CLI tests hit the live government registry** (`clitest_pobierz_info_o_nip`,
+   `clitest_nowa_faktura_nip_lookup`) via `wl-api.mf.gov.pl`. They fail with no route to that
+   host. They also assert **live third-party data** — `clitest_nowa_faktura_nip_lookup` expects
+   NIP `5260202588` to resolve to the exact string `'KAMYK' SPÓŁKA Z OGRANICZONĄ
+   ODPOWIEDZIALNOŚCIĄ` at `LITERACKA 21/24, 01-864 WARSZAWA`, so a change in that company's
+   registered details breaks the test without anything being wrong here. Check the API response
+   before hunting for a bug in our code.
 6. **`.format_check` in `.gitlab-ci.yml` never runs** — leading dot makes it a template job.
 7. `tests/L_lib.sh` is downloaded at test time and gitignored. Don't commit it.
 
