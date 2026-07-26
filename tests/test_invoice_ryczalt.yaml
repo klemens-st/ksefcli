@@ -1,0 +1,19 @@
+Sprzedawca:
+  Nip: "5260250274"
+  Nazwa: "Firma Sprzedawca"
+  Adres: "ul. Prosta 1, 00-001 Warszawa"
+Kupujący:
+  Nazwa: "Klient Kupujący"
+  Adres: "ul. Krzywa 2, 00-002 Kraków"
+DataWykonania: "2026-02-15"
+Pozycje:
+  - Nazwa: "Usługa IT"
+    Jednostka: "godz"
+    Ilosc: 1
+    StawkaPodatku: "23%"
+    WartoscBrutto: 1230.00
+  - Nazwa: "Produkt rolny"
+    Jednostka: "kg"
+    Ilosc: 1
+    StawkaPodatku: "4%"
+    WartoscBrutto: 104.00

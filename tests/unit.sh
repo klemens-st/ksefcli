@@ -212,6 +212,31 @@ clitest_nowa_faktura() {
     L_unittest_cmd ls -la invoice.xml
 }
 
+# NowaFaktura emitted P_13_1/_2/_3 only, for rates 23, 8 and 5. A 4% position (ryczałt) was
+# counted in P_15 but had no summary fields at all, so the invoice's own components summed to
+# 1230.00 against a stated total of 1334.00 — and it still passed XSD validation, which does
+# not check that the totals agree.
+clitest_nowa_faktura_stawka_ryczalt() {
+    L_with_cd_tmpdir
+    L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice_ryczalt.yaml out.xml
+
+    local p13_1 p14_1 p13_4 p14_4 p15
+    L_unittest_cmd -v p13_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_1"
+    L_unittest_cmd -v p14_1 cli XMLExtract out.xml "/Faktura/Fa/P_14_1"
+    L_unittest_cmd -v p13_4 cli XMLExtract out.xml "/Faktura/Fa/P_13_4"
+    L_unittest_cmd -v p14_4 cli XMLExtract out.xml "/Faktura/Fa/P_14_4"
+    L_unittest_cmd -v p15 cli XMLExtract out.xml "/Faktura/Fa/P_15"
+
+    # 1230.00 gross at 23% is 1000.00 + 230.00.
+    L_unittest_vareq p13_1 "1000.00"
+    L_unittest_vareq p14_1 "230.00"
+    # 104.00 gross at 4% is 100.00 + 4.00. This band did not exist in the output before.
+    L_unittest_vareq p13_4 "100.00"
+    L_unittest_vareq p14_4 "4.00"
+    # P_15 must equal the sum of the bands it reports.
+    L_unittest_vareq p15 "1334.00"
+}
+
 clitest_nowa_faktura_nip_lookup() {
     L_with_cd_tmpdir
     L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice_nip_only.yaml invoice_nip_lookup.xml

@@ -4,6 +4,8 @@ using System.Xml.Linq;
 
 using CommandLine;
 
+using KCKSeFCli.Utils;
+
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -234,17 +236,47 @@ public class NowaFakturaCommand : IGlobalCommand {
             new XElement("P_6", dataWykonania)
         });
 
-        if (totalsByRate.TryGetValue("23", out RateTotals? totals23) && totals23.TotalNet > 0) {
-            faElements.Add(new XElement("P_13_1", totals23.TotalNet.ToString("F2", CultureInfo.InvariantCulture)));
-            faElements.Add(new XElement("P_14_1", totals23.TotalVat.ToString("F2", CultureInfo.InvariantCulture)));
+        // Every rate band that has a P_13_x/P_14_x pair, not just 23/8/5. A 4% (ryczałt) or
+        // historical 22%/7% position used to be counted in P_15 with no summary fields at all,
+        // so the invoice did not add up — and XSD validation does not check that it does.
+        //
+        // Emitted in field order because the FA(3) schema is a sequence. Net and VAT keep the
+        // gross-remainder arithmetic above (vat = brutto - net), which makes net + vat equal
+        // the gross exactly; only the field mapping comes from InvoiceTotals.
+        List<string> unsupportedRates = new List<string>();
+        Dictionary<string, (string VatField, decimal Net, decimal Vat)> byField = new();
+
+        foreach (KeyValuePair<string, RateTotals> entry in totalsByRate) {
+            InvoiceTotals.VatBand? band = InvoiceTotals.BandForRate(entry.Key);
+            if (band is null) {
+                // "oo" and "zw" are expected here: they carry no VAT and are declared through
+                // Adnotacje and other fields instead.
+                if (entry.Key != "oo" && entry.Value.TotalNet > 0) {
+                    unsupportedRates.Add(entry.Key);
+                }
+                continue;
+            }
+            (string VatField, decimal Net, decimal Vat) running =
+                byField.TryGetValue(band.Value.NetField, out (string VatField, decimal Net, decimal Vat) existing)
+                    ? existing
+                    : (band.Value.VatField, 0m, 0m);
+            byField[band.Value.NetField] =
+                (running.VatField, running.Net + entry.Value.TotalNet, running.Vat + entry.Value.TotalVat);
         }
-        if (totalsByRate.TryGetValue("8", out RateTotals? totals8) && totals8.TotalNet > 0) {
-            faElements.Add(new XElement("P_13_2", totals8.TotalNet.ToString("F2", CultureInfo.InvariantCulture)));
-            faElements.Add(new XElement("P_14_2", totals8.TotalVat.ToString("F2", CultureInfo.InvariantCulture)));
+
+        foreach (KeyValuePair<string, (string VatField, decimal Net, decimal Vat)> pair
+                 in byField.OrderBy(p => p.Key, StringComparer.Ordinal)) {
+            if (pair.Value.Net <= 0) {
+                continue;
+            }
+            faElements.Add(new XElement(pair.Key, InvoiceTotals.Format(pair.Value.Net)));
+            faElements.Add(new XElement(pair.Value.VatField, InvoiceTotals.Format(pair.Value.Vat)));
         }
-        if (totalsByRate.TryGetValue("5", out RateTotals? totals5) && totals5.TotalNet > 0) {
-            faElements.Add(new XElement("P_13_3", totals5.TotalNet.ToString("F2", CultureInfo.InvariantCulture)));
-            faElements.Add(new XElement("P_14_3", totals5.TotalVat.ToString("F2", CultureInfo.InvariantCulture)));
+
+        if (unsupportedRates.Count > 0) {
+            Log.Warning($"Stawki {string.Join(", ", unsupportedRates)} nie mają pary pól "
+                        + "P_13_x/P_14_x. Ich wartość wchodzi do P_15, ale odpowiednie pola "
+                        + "sumujące trzeba uzupełnić ręcznie.");
         }
 
         faElements.Add(new XElement("P_15", totalGross.ToString("F2", CultureInfo.InvariantCulture)));
