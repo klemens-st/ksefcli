@@ -1,7 +1,3 @@
 [submodule "thirdparty/ksef-client-csharp"]
 	path = thirdparty/ksef-client-csharp
 	url = https://github.com/CIRFMF/ksef-client-csharp
-
-[submodule "ksef-pdf-generator"]
-	path = thirdparty/ksef-pdf-generator
-	url = https://github.com/CIRFMF/ksef-pdf-generator

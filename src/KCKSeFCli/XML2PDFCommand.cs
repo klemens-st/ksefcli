@@ -105,23 +105,51 @@ public class XML2PDFCommand : IGlobalCommand {
         }
     }
 
+    /// <summary>
+    /// SHA-256 of the pinned Linux release of ksef-pdf-generator 1.1.0.
+    ///
+    /// The generator is downloaded and then executed, so it is only as trustworthy as this pin.
+    /// GitHub release assets can be replaced in place, which is why the check is against a hash
+    /// recorded here rather than against the URL alone. Retrieved 2026-07-26; see
+    /// docs/XML2PDF.md for how to refresh it.
+    /// </summary>
+    public const string LinuxGeneratorSha256 =
+        "3e991795256b319801ea63ec6393a37be1866bc0c32800e0f543e6e61b91b5a4";
+
+    /// <summary>SHA-256 of the pinned Windows release of ksef-pdf-generator 1.1.0.</summary>
+    public const string WindowsGeneratorSha256 =
+        "ab482b6fd718b63ae490555da52c2020c7b1a2c36e74f206557527faaf48e5a5";
+
+    /// <summary>
+    /// Fallback for platforms without a prebuilt release, pinned to the commit tagged 1.1.0.
+    ///
+    /// A commit id cannot be moved; a tag can. The previous value pointed at "v1.1.0", which is
+    /// not a ref in that repository at all — only "1.1.0" exists — so this path was broken as
+    /// well as unpinned.
+    /// </summary>
+    public const string NpxPackageSpec =
+        "github:kamilcuk/ksef-pdf-generator#3fd361f607f5d179ad3921db02917c88c259919c";
+
     public static async Task<Runner> GetRunner(CancellationToken cancellationToken) {
         string? url = null;
         string? fileName = null;
+        string? expectedSha256 = null;
 
         if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux)) {
             url = "https://github.com/Kamilcuk/ksef-pdf-generator/releases/download/1.1.0/ksef-pdf-generator";
             fileName = "ksef-pdf-generator-linux-1.1.0";
+            expectedSha256 = LinuxGeneratorSha256;
         } else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)) {
             url = "https://github.com/Kamilcuk/ksef-pdf-generator/releases/download/1.1.0/ksef-pdf-generator.exe";
             fileName = "ksef-pdf-generator-win-1.1.0.exe";
+            expectedSha256 = WindowsGeneratorSha256;
         }
 
         string[] runnerCommand;
 
-        if (url is null || fileName is null) {
+        if (url is null || fileName is null || expectedSha256 is null) {
             AssertNpxExists();
-            runnerCommand = new[] { "npx", "--yes", "github:kamilcuk/ksef-pdf-generator#v1.1.0" };
+            runnerCommand = new[] { "npx", "--yes", NpxPackageSpec };
         } else {
             Directory.CreateDirectory(IGlobalCommand.CacheDir);
 
@@ -140,14 +168,22 @@ public class XML2PDFCommand : IGlobalCommand {
 
             string destinationPath = Path.Combine(IGlobalCommand.CacheDir, fileName);
 
-            await Downloader.DownloadFileWithTimestampCheckAsync(url, destinationPath, cancellationToken).ConfigureAwait(false);
+            // Throws unless the bytes match the pin, so nothing unverified is ever made
+            // executable or run.
+            await Downloader.DownloadVerifiedFileAsync(url, destinationPath, expectedSha256, cancellationToken).ConfigureAwait(false);
 
             if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux)) {
+#if NET7_0_OR_GREATER
+                // Owner-only, and set directly rather than by shelling out to chmod.
+                File.SetUnixFileMode(destinationPath,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+#else
                 Process p = new System.Diagnostics.Process {
                     StartInfo = { FileName = "chmod", Arguments = $"+x \"{destinationPath}\"" }
                 };
                 p.Start();
                 p.WaitForExit();
+#endif
             }
             runnerCommand = new[] { destinationPath };
         }
