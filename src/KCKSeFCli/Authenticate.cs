@@ -103,7 +103,14 @@ public static class Authenticate {
         string signedXml = SignatureService.Sign(unsignedXml, certificate);
         PrintXmlToConsole(signedXml, "XML po podpisie (XAdES)");
         Log.Information("[7] Wysyłanie podpisanego XML do KSeF...");
-        SignatureResponse submission = await ksefClient.SubmitXadesAuthRequestAsync(signedXml, verifyCertificateChain: false).ConfigureAwait(false);
+        // Asks KSeF to check that the signing certificate chains to a trusted CA. Off only for
+        // the test environment, where self-signed certificates are the norm; see
+        // ProfileConfig.VerifyCertificateChain.
+        bool verifyCertificateChain = config.VerifyCertificateChain;
+        Log.Information($"    verifyCertificateChain={verifyCertificateChain}");
+        SignatureResponse submission = await ksefClient
+            .SubmitXadesAuthRequestAsync(signedXml, verifyCertificateChain)
+            .ConfigureAwait(false);
         Log.Information($"    ReferenceNumber: {submission.ReferenceNumber}");
         Log.Information("[8] Odpytanie o status operacji uwierzytelnienia...");
         DateTime startTime = DateTime.UtcNow;

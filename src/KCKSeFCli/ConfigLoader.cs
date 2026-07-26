@@ -93,6 +93,7 @@ public static class ConfigLoader {
                     Environment = profileConfig.Environment,
                     Nip = !string.IsNullOrEmpty(profileConfig.Nip) ? profileConfig.Nip : NipUtils.GetNipFromCertificate(newCert.Certificate) ?? "",
                     Token = profileConfig.Token,
+                    Verify_Certificate_Chain = profileConfig.Verify_Certificate_Chain,
                 };
             } else if (profileConfig != null) {
                 resolvedProfiles[profileName!] = new ProfileConfig {
@@ -100,6 +101,7 @@ public static class ConfigLoader {
                     Environment = profileConfig.Environment,
                     Nip = !string.IsNullOrEmpty(profileConfig.Nip) ? profileConfig.Nip : !string.IsNullOrEmpty(profileConfig.Token) ? NipUtils.ExtractNipFromToken(profileConfig.Token!) : "",
                     Token = profileConfig.Token,
+                    Verify_Certificate_Chain = profileConfig.Verify_Certificate_Chain,
                 };
             }
         }

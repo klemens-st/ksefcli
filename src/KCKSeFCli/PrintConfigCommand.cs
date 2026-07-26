@@ -42,6 +42,7 @@ public class PrintConfigCommand : IWithConfigCommand {
         Environment = config.Environment,
         Nip = config.Nip,
         Token = Mask(config.Token),
+        Verify_Certificate_Chain = config.Verify_Certificate_Chain,
         Certificate = config.Certificate is null ? null : new CertificateConfig {
             Private_Key = Mask(config.Certificate.Private_Key),
             Certificate = Mask(config.Certificate.Certificate),
@@ -64,6 +65,7 @@ public class PrintConfigCommand : IWithConfigCommand {
             Nip = config.Nip,
             Certificate = config.Certificate,
             Token = config.Token,
+            Verify_Certificate_Chain = config.Verify_Certificate_Chain,
         } : Redact(config);
 
         var report = new {

@@ -13,7 +13,25 @@ public class ProfileConfig {
     public CertificateConfig? Certificate { get; init; }
     public string? Token { get; init; }
 
+    /// <summary>
+    /// Overrides <see cref="VerifyCertificateChain"/>. Leave unset to follow the environment.
+    /// </summary>
+    public bool? Verify_Certificate_Chain { get; init; }
+
     public AuthMethod AuthMethod => Certificate != null ? AuthMethod.Xades : AuthMethod.KsefToken;
+
+    /// <summary>
+    /// Whether KSeF should verify that the certificate signing the XAdES authentication request
+    /// chains to a trusted CA.
+    ///
+    /// It is a query parameter on /v2/auth/xades-signature, so this asks the server to perform
+    /// the check rather than performing one locally. Off is right for the test environment,
+    /// where self-signed certificates are the norm; anywhere else it discards a check KSeF is
+    /// offering to make. Anything other than "test" — including an unrecognised environment —
+    /// therefore verifies.
+    /// </summary>
+    public bool VerifyCertificateChain =>
+        Verify_Certificate_Chain ?? !string.Equals(Environment, "test", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class CertificateConfig {
@@ -38,6 +56,7 @@ public sealed class ProfileConfigWithName : ProfileConfig {
         Nip = original.Nip;
         Certificate = original.Certificate;
         Token = original.Token;
+        Verify_Certificate_Chain = original.Verify_Certificate_Chain;
     }
 
     public ProfileConfigWithName(ProfileConfigWithName original) {
@@ -46,6 +65,7 @@ public sealed class ProfileConfigWithName : ProfileConfig {
         Nip = original.Nip;
         Certificate = original.Certificate;
         Token = original.Token;
+        Verify_Certificate_Chain = original.Verify_Certificate_Chain;
     }
 }
 

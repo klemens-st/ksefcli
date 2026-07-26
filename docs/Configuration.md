@@ -50,6 +50,7 @@ profiles:
                 *   `password_env`: Nazwa zmiennej środowiskowej, która przechowuje hasło do klucza prywatnego.
                 *   `password_file`: Ścieżka do pliku z hasłem do klucza prywatnego.
                 *   `password_cmd`: Tablica ciągów znaków (komenda i argumenty) do wykonania w celu pobrania hasła. Hasło zostanie odczytane ze standardowego wyjścia (stdout) komendy. Opcja ta jest w konflikcie z `password`, `password_env` oraz `password_file`.
+        *   `verify_certificate_chain`: (Opcjonalnie) Czy KSeF ma sprawdzać łańcuch certyfikatu podpisującego żądanie uwierzytelnienia XAdES. Domyślnie `true` we wszystkich środowiskach poza `test`, gdzie certyfikaty samopodpisane są normą. Środowisko nierozpoznane również sprawdza łańcuch — domyślna wartość jest po bezpiecznej stronie. Dotyczy wyłącznie uwierzytelniania certyfikatem.
 
 ### Przykład Konfiguracji
 
