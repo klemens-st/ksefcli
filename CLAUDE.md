@@ -19,9 +19,9 @@ Needs network to `api.nuget.org` and `github.com`.
 
 ```bash
 dotnet build                                                   # WHOLE solution — see gotcha 1
-dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 98 tests
+dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 205 tests
 dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
-./tests/unit.sh ./dist/kcksefcli                                # 40 CLI tests
+./tests/unit.sh ./dist/kcksefcli                                # 51 CLI tests (publish first)
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
@@ -66,8 +66,12 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
   a failed assertion instead. Use `L_unittest_success` / `L_unittest_failure` for those.
 - `L_unittest_cmd -v` captures stdout only; add `-j` to also capture stderr. Combining a leading
   `!` with `-e N` cancels out — `!` already inverts the status before the comparison.
+- To test config-dependent behaviour offline, add a profile to `tests/test_kcksefcli.yaml`
+  (e.g. `token_prod`). The confirmation gate runs before authentication, so a fake token never
+  leaves the machine.
 - When a test claims to pin a bug fix, **run it against the pre-fix binary** and confirm it
   fails there. Two of this repo's fixes had first-draft tests that passed either way.
+  `git stash push <file> && dotnet publish … -o dist_old && ./tests/unit.sh ./dist_old/kcksefcli`
 
 ## Security invariants — do not undo
 
@@ -113,6 +117,8 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
 - Round **once, before the value reaches any total**, away from zero (`Math.Round` defaults to
   banker's rounding). VAT is computed on the **band total**, not per line, or rounding error
   accumulates.
+- **XSD validation does not check that the totals agree.** An invoice missing a whole band
+  validates fine. Never treat `WeryfikujXML` passing as evidence the money is right.
 - `WystawKorekte` replaces a corrected line with a negated copy plus the corrected one, so that
   band holds the **difference** while untouched lines keep their full value. Pre-existing
   semantic, encoded in `tests/expected_korekta.xml`. Don't "fix" it without deciding what a KOR
@@ -123,6 +129,8 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
 - `.editorconfig` governs: 4 spaces, max line 100, K&R braces (`csharp_new_line_before_open_brace = none`).
 - Explicit types over `var`, matching surrounding code.
 - **User-facing output and docs are Polish**; code comments and commit messages are English.
+  This includes `[Option(HelpText = ...)]`. Existing HelpText is inconsistently English —
+  don't copy a neighbour, write Polish.
 - Exit codes: `0` ok, `1` failure, `2` partial success (`PrzeslijFaktury` — some invoices filed,
   so a blind retry duplicates them), `3` unhandled exception.
 - Commits stay small and separable so upstreaming to the GitLab original remains cheap.
