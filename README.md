@@ -46,6 +46,10 @@
   - [`XMLRemoveNamespace`](docs/XMLRemoveNamespace.md)
   - [`XML2PDF`](docs/XML2PDF.md)
 - [Rozwój](#rozwój)
+  - [Wymagania](#wymagania)
+  - [Przygotowanie środowiska](#przygotowanie-środowiska)
+  - [Testy](#testy)
+  - [Praca z Claude Code CLI](#praca-z-claude-code-cli)
 - [Uwierzytelnianie w KSeF](#uwierzytelnianie-w-ksef)
 - [Autor i Licencja](#autor-i-licencja)
 
@@ -155,24 +159,134 @@ Szczegółowy opis konfiguracji profili, globalnych opcji i pamięci podręcznej
 
 ## Rozwój
 
-Rozwój odbywa się na GitLabie.
+Rozwój oryginalnego projektu odbywa się na GitLabie. Ten fork jest utrzymywany osobno.
 
-Aby skonfigurować środowisko deweloperskie i uruchomić aplikację, wykonaj następujące kroki:
+### Wymagania
+
+| Narzędzie | Po co | Wymagane |
+|---|---|---|
+| **.NET SDK 10** | Projekt kompiluje się na `net6.0;net10.0`, a testy na `net10.0`. SDK 10 zbuduje obie wersje docelowe — nie trzeba osobno instalować SDK 6. | Tak |
+| **git** | Klient KSeF jest submodułem. | Tak |
+| **bash** + **curl** lub **wget** | Testy czarnoskrzynkowe pobierają przy pierwszym uruchomieniu bibliotekę `L_lib.sh`. | Do testów |
+| Dostęp sieciowy do `api.nuget.org` i `github.com` | Paczki NuGet, submoduł, `L_lib.sh` oraz generator PDF. | Tak |
+| **jq** | Wyłącznie do przykładów użycia z tego README. Testy używają własnego zamiennika `tests/jq_sed.sh` i nie wymagają `jq`. | Nie |
+| **node** / **npx** | Tylko dla `XML2PDF` na platformach bez gotowej binarki generatora (np. macOS). Na Linuksie i Windowsie pobierana jest przypięta binarka. | Nie |
+| **patchelf** | Tylko dla `make nix-fix` na NixOS. | Nie |
+
+W Debianie/Ubuntu SDK jest w archiwum dystrybucji:
 
 ```bash
-# Sklonuj repozytorium
-git clone https://gitlab.com/kamcuk/kcksefcli.git
+sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0 git curl jq
+```
+
+Jeśli `apt-get install` kończy się błędem 404, najpierw wykonaj `apt-get update` — indeks
+pakietów potrafi wskazywać wersję, której nie ma już w repozytorium.
+
+### Przygotowanie środowiska
+
+```bash
+# Sklonuj repozytorium i przejdź na gałąź roboczą
+git clone <adres-repozytorium> kcksefcli
 cd kcksefcli
+git checkout claude/ksef-cli-evaluation-d8qhpu
 
 # Inicjalizacja i pobranie zawartości niezbędnych submodułów (zależności)
 git submodule update --init --recursive
 
-# Pobranie paczek .NET i budowa projektu
+# Pobranie paczek .NET i budowa projektu (wszystkie wersje docelowe)
 dotnet build
 
 # Uruchomienie aplikacji
-dotnet run --project src/KCKSeFCli -- <polecenie> [opcje]
+# -f net10.0 jest konieczne: projekt ma wiele wersji docelowych i bez tego
+# `dotnet run` odmawia uruchomienia
+dotnet run --project src/KCKSeFCli -f net10.0 -- <polecenie> [opcje]
 ```
+
+Budowa wypisuje ok. 100 ostrzeżeń `NU1903` pochodzących z submodułu, który deklaruje podatną
+wersję `System.Security.Cryptography.Xml`. Nie psują one budowy: `src/KCKSeFCli.csproj`
+przypina bezpieczną wersję `10.0.10`, a przypięcie jest celowo trwałe, bo wersja deklarowana
+przez klienta wciąż jest podatna.
+
+### Testy
+
+Są dwa zestawy testów i oba powinny przechodzić na czystym drzewie.
+
+```bash
+# Testy jednostkowe i regresyjne (C#, xUnit)
+dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj
+
+# Testy czarnoskrzynkowe CLI, uruchamiane na zbudowanej binarce
+dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
+./tests/unit.sh ./dist/kcksefcli
+```
+
+Stan oczekiwany: **98 testów C#** oraz **40 testów CLI**. Każda poprawka bezpieczeństwa ma
+własny test regresyjny — opis, czego dana poprawka broni, znajduje się w komentarzu na początku
+odpowiedniego pliku w `tests/KCKSeFCli.Tests/`.
+
+Dwa testy CLI wymagają dostępu do rządowego API `wl-api.mf.gov.pl`
+(`clitest_pobierz_info_o_nip` i `clitest_nowa_faktura_nip_lookup`). Za restrykcyjnym proxy
+będą one przechodzić na czerwono — to ograniczenie środowiska, nie regresja.
+
+Testy w `tests/integration.sh` wymagają prawdziwych poświadczeń KSeF i celowo kończą się
+błędem bez nich. Konfigurację umieść w `secrets/kcksefcli.yaml` albo
+`.git/KSEF/kcksefcli.yaml`; oba wzorce są już w `.gitignore`.
+
+Skróty w `Makefile`:
+
+```bash
+make build        # budowa
+make test         # UWAGA: uruchamia `dotnet format`, który MODYFIKUJE pliki źródłowe
+make test-format  # sprawdzenie formatowania bez modyfikacji
+```
+
+**`make test` przeformatuje ci drzewo.** Zależy od celu `format`, który uruchamia
+`dotnet format` bez `--verify-no-changes`, więc przepisuje pliki. Obecnie dotyka ok. 30 plików,
+w tym te przeniesione żywcem z repozytorium klienta (`Utils/AsyncPollingUtils.cs`,
+`Utils/BatchSessionUtils.cs`, `Utils/KsefRateLimitWrapper.cs`). Ta rozbieżność formatowania
+istniała przed tą gałęzią — pliki dodane i zmienione tutaj przechodzą `dotnet format` bez
+zmian. Nie została naprawiona celowo: przeformatowanie kopii z upstreamu utrudniłoby przyszłą
+synchronizację z `CIRFMF/ksef-client-csharp`.
+
+Do samego uruchomienia testów używaj więc wprost `dotnet test`, a `make test` tylko wtedy, gdy
+świadomie chcesz też przeformatować kod. Zadanie `.format_check` w `.gitlab-ci.yml` jest
+szablonem (nazwa zaczyna się od kropki), więc CI go nie uruchamia.
+
+### Praca z Claude Code CLI
+
+Ustawienia projektu leżą w `.claude/settings.local.json`. Poza wymaganiami z tabeli wyżej
+warto mieć:
+
+```bash
+# Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# Przydatne przy ręcznym sprawdzaniu wyników
+sudo apt-get install -y jq
+```
+
+- **.NET SDK 10** — najważniejsza pozycja. Bez niego Claude Code nie zbuduje projektu ani nie
+  uruchomi testów, więc nie zweryfikuje własnych zmian i będzie zgadywać zamiast sprawdzać.
+- **jq** — do ręcznego oglądania wyjścia JSON z `SzukajFaktur` czy `PrintConfig --json`.
+  Same testy go nie potrzebują.
+- **ripgrep** — Claude Code ma własny, więc instalacja systemowa nie jest konieczna; przydaje
+  się, jeśli chcesz przeszukiwać repozytorium tak samo z własnej powłoki.
+
+Kilka rzeczy specyficznych dla tego repozytorium, które warto wiedzieć przed pierwszą sesją:
+
+- **Zawsze buduj i testuj przed commitem.** `TreatWarningsAsErrors` jest włączone, więc nowe
+  ostrzeżenie zatrzymuje budowę.
+- **Buduj całe rozwiązanie (`dotnet build`), nie tylko `-f net10.0`.** Wersja `net6.0` używa
+  starszych API i łatwo ją zepsuć niezauważenie — CI buduje ją tylko w zadaniu wydania dla
+  Windows x86.
+- **Pierwsze użycie `XML2PDF` pobiera ok. 74 MB** generatora PDF do `~/.cache/kcksefcli`.
+  Plik jest weryfikowany sumą SHA-256 przed uruchomieniem; przy zmianie wersji generatora
+  trzeba zaktualizować przypięcie w `XML2PDFCommand` (patrz [XML2PDF](docs/XML2PDF.md)).
+- **`tests/L_lib.sh` jest w `.gitignore`** i pobierany przy pierwszym uruchomieniu testów.
+  Nie dodawaj go do repozytorium.
+- **Nie uruchamiaj poleceń zmieniających stan na profilu produkcyjnym.** Do pracy używaj
+  profilu `test` lub `demo`; `PrzeslijFaktury` i `UniewaznijCertyfikat` wywołują skutki
+  nieodwracalne po stronie KSeF.
 
 ## Uwierzytelnianie w KSeF
 
