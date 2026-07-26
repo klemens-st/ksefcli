@@ -15,7 +15,8 @@ public static class ArtifactVerification {
     /// <summary>Lowercase hex SHA-256 of the file's contents.</summary>
     public static string Sha256Hex(string path) {
         using FileStream stream = File.OpenRead(path);
-#if NET6_0_OR_GREATER
+        // The Stream overload of SHA256.HashData is .NET 7+; net6.0 needs the instance API.
+#if NET7_0_OR_GREATER
         byte[] hash = SHA256.HashData(stream);
 #else
         using SHA256 sha = SHA256.Create();
