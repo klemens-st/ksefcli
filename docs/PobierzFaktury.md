@@ -23,6 +23,17 @@ To polecenie akceptuje wszystkie opcje z `SzukajFaktur` oraz dodatkowo:
 
 ---
 
+## Nazwy plików
+
+Nazwa pliku pochodzi z odpowiedzi KSeF, a przy `--useInvoiceNumber` — z numeru nadanego przez
+wystawcę faktury. Żadna z nich nie jest więc pod kontrolą tego narzędzia i przed użyciem
+zostaje oczyszczona: wszystko poza literami, cyframi oraz znakami `-`, `_` i `.` zamienia się
+na `_`. Polskie znaki diakrytyczne są zachowywane.
+
+Dzięki temu numer taki jak `0004/26` zapisuje się jako `0004_26.xml` zamiast kończyć się
+błędem, a plik nigdy nie powstaje poza katalogiem wskazanym opcją `--outputdir`. Jeżeli nazwa
+wymagała zmiany, pojawia się ostrzeżenie z nazwą pierwotną i wynikową.
+
 
 ## Konfiguracja i Uwierzytelnianie
 

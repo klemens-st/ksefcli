@@ -48,7 +48,12 @@ public class PobierzFakturyCommand : SzukajFakturCommand {
         List<InvoiceSummary> invoices = await base.SzukajFaktury(scope, ksefClient, cancellationToken).ConfigureAwait(false);
 
         foreach (InvoiceSummary invoiceSummary in invoices) {
-            string fileName = UseInvoiceNumber ? invoiceSummary.InvoiceNumber : invoiceSummary.KsefNumber;
+            // Both identifiers come from the KSeF response, and the invoice number is chosen by
+            // whoever issued the invoice, so neither goes into a path unfiltered.
+            string rawName = UseInvoiceNumber && !string.IsNullOrWhiteSpace(invoiceSummary.InvoiceNumber)
+                ? invoiceSummary.InvoiceNumber
+                : invoiceSummary.KsefNumber;
+            string fileName = SafePath.SafeFileNameLogged(rawName);
             string jsonFilePath = Path.Combine(OutputDir, $"{fileName}.json");
             string xmlFilePath = Path.Combine(OutputDir, $"{fileName}.xml");
 

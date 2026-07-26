@@ -286,7 +286,8 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
                 foreach (UpoPageResponse? upo in sessionStatus.Upo.Pages) {
                     Log.Information($"Pobieranie zbiorczego UPO: {upo.ReferenceNumber}");
                     string upoContent = await ksefClient.GetSessionUpoAsync(referenceNumber, upo.ReferenceNumber, accessToken, cancellationToken).ConfigureAwait(false);
-                    string upoPath = Path.Combine(UpoDir, $"uposesji-{upo.ReferenceNumber}.xml");
+                    string upoPath = Path.Combine(UpoDir,
+                        SafePath.SafeFileNameLogged($"uposesji-{upo.ReferenceNumber}") + ".xml");
                     File.WriteAllText(upoPath, XDocument.Parse(upoContent).ToString() + "\n");
                     if (UpoPdf) {
                         Log.Information($"Generowanie PDF dla zbiorczego UPO: {upo.ReferenceNumber}");
@@ -311,7 +312,8 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
                 foreach (SessionInvoice? invoice in sessionInvoices.Invoices.Where(i => i.KsefNumber is not null)) {
                     Log.Information($"Pobieranie indywidualnego UPO dla faktury: {invoice.KsefNumber}");
                     string upoContent = await ksefClient.GetSessionInvoiceUpoByKsefNumberAsync(referenceNumber, invoice.KsefNumber, accessToken, cancellationToken).ConfigureAwait(false);
-                    string upoPath = Path.Combine(UpoDir, $"upo-{invoice.KsefNumber}.xml");
+                    string upoPath = Path.Combine(UpoDir,
+                        SafePath.SafeFileNameLogged($"upo-{invoice.KsefNumber}") + ".xml");
                     File.WriteAllText(upoPath, XDocument.Parse(upoContent).ToString() + "\n");
                     if (UpoPdf) {
                         Log.Information($"Generowanie PDF dla indywidualnego UPO: {invoice.KsefNumber}");
