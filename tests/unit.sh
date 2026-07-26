@@ -231,6 +231,35 @@ clitest_wystawkorekte() {
     rm "$OUTPUT_FILE"
 }
 
+# Regression tests for the test harness itself. tests/lib.sh downloads ~11k lines of
+# third-party bash (L_lib.sh) over the network and sources it into this shell. An unverified
+# download that is then executed is the same defect class the PDF generator had before it was
+# pinned in XML2PDFCommand.cs, only here it sits in the harness rather than the product.
+clitest_verify_sha256_accepts_and_rejects() {
+    local f="$TMPD/verify_sha256_probe" good
+    printf 'kcksefcli\n' >"$f"
+    good=$(sha256sum -- "$f"); good=${good%% *}
+
+    L_unittest_success verify_sha256 "$f" "$good"
+    # A single flipped character must be rejected.
+    L_unittest_failure verify_sha256 "$f" "0${good:1}"
+    # An empty expectation is a verification failure, never a skip.
+    L_unittest_failure verify_sha256 "$f" ""
+    # A missing file is a failure, not a pass by absence.
+    L_unittest_failure verify_sha256 "$TMPD/verify_sha256_absent" "$good"
+    # Tampering with the content must be rejected against the original hash.
+    printf 'tampered\n' >>"$f"
+    L_unittest_failure verify_sha256 "$f" "$good"
+    rm "$f"
+}
+
+clitest_l_lib_matches_pinned_sha256() {
+    # Set by pull_L_lib to whatever it actually sourced, so this covers the cache, the copy
+    # found on PATH and a fresh download alike.
+    L_unittest_success test -n "${L_lib_path:-}"
+    L_unittest_success verify_sha256 "${L_lib_path:-}" "${L_lib_sha256:-}"
+}
+
 ###############################################################################
 
 DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"

@@ -81,10 +81,10 @@ secret
 dist
 ./tests/*.pdf
 
-# Downloaded at test time by tests/lib.sh:pull_L_lib as a local cache.
-# Not vendored deliberately: it is 11k lines of third-party bash fetched from a
-# GitHub release with no checksum. Vendoring it with a pinned hash is tracked
-# separately as a supply-chain hardening task.
+# Downloaded at test time by tests/lib.sh:pull_L_lib as a local cache. Not vendored
+# deliberately: it is 11k lines of third-party bash. It is verified against the
+# L_lib_sha256 pin in tests/lib.sh before being sourced, so the cache is disposable.
 /tests/L_lib.sh
+/tests/L_lib.sh.tmp.*
 TODO.md
 pliki-do-pobrania-ksef/
