@@ -34,7 +34,6 @@ public class Program {
             typeof(PrzeslijFakturyCommand),
             typeof(QRDoFakturyCommand),
             typeof(QRWeryfikacjiFakturyCommand),
-            typeof(SelfUpdateCommand),
             typeof(SprawdzLimitCertyfikatowCommand),
             typeof(SzukajFakturCommand),
             typeof(TestTokenAuthCommand),

@@ -32,7 +32,6 @@
   - [`PrzeslijFaktury`](docs/PrzeslijFaktury.md)
   - [`QRDoFaktury`](docs/QRDoFaktury.md)
   - [`QRWeryfikacjiFaktury`](docs/QRWeryfikacjiFaktury.md)
-  - [`SelfUpdate`](docs/SelfUpdate.md)
   - [`SprawdzLimitCertyfikatow`](docs/SprawdzLimitCertyfikatow.md)
   - [`SzukajFaktur`](docs/SzukajFaktur.md)
   - [`TestTokenAuth`](docs/TestTokenAuth.md)
@@ -68,6 +67,17 @@ export PATH="$HOME/.local/bin:$PATH"
 - [Linux x64](https://gitlab.com/kamcuk/kcksefcli/-/jobs/artifacts/main/raw/kcksefcli?job=linux_build_main)
 - [Windows x64](https://gitlab.com/kamcuk/kcksefcli/-/jobs/artifacts/main/raw/kcksefcli.exe?job=windows_build_main)
 - [Windows x86 (.NET 6.0)](https://gitlab.com/kamcuk/kcksefcli/-/jobs/artifacts/main/raw/kcksefcli.exe?job=win-x86-net6.0_build_main)
+
+### Aktualizacja
+
+Aktualizacja polega na ponownym pobraniu binarki w sposób opisany powyżej.
+
+Nie ma polecenia `SelfUpdate`. Podmieniało ono działającą binarkę plikiem pobranym spod
+dowolnego adresu URL, bez podpisu i bez sumy kontrolnej, domyślnie z tocząco budowanego
+artefaktu CI z gałęzi `main`. Nie ma tu nic stabilnego, co dałoby się przypiąć sumą SHA-256,
+więc nie da się tego bezpiecznie utwardzić. Narzędzie ma dostęp do danych uwierzytelniających
+do KSeF, dlatego decyzja o podmianie jego binarki należy do procesu wdrożeniowego, a nie do
+samego narzędzia.
 
 
 ## Przykłady użycia
@@ -127,7 +137,6 @@ Szczegółowy opis konfiguracji profili, globalnych opcji i pamięci podręcznej
   - [`PrzeslijFaktury`](docs/PrzeslijFaktury.md) - Upload invoices in XML format.
   - [`QRDoFaktury`](docs/QRDoFaktury.md) - Generate a QR code for an invoice and save it to a file
   - [`QRWeryfikacjiFaktury`](docs/QRWeryfikacjiFaktury.md) - Generate a verification QR code (KOD II) for an invoice and save it to a file.
-  - [`SelfUpdate`](docs/SelfUpdate.md) - Updates the tool to the latest version.
   - [`SprawdzLimitCertyfikatow`](docs/SprawdzLimitCertyfikatow.md) - Check available certificate limits.
   - [`SzukajFaktur`](docs/SzukajFaktur.md) - Query invoice metadata
   - [`TestAuth`](docs/TestAuth.md) - Authenticate using configured method
