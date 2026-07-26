@@ -7,6 +7,7 @@
 - [Instalacja](#instalacja)
 - [Przykłady użycia](#przykłady-użycia)
 - [Konfiguracja](#konfiguracja)
+  - [Bezpieczeństwo pracy agentowej](docs/BezpieczenstwoAgentow.md)
   - [Struktura pliku `kcksefcli.yaml`](#struktura-pliku-kcksefcliyaml)
   - [Opcje Konfiguracyjne](#opcje-konfiguracyjne)
   - [Przykład Konfiguracji](#przykład-konfiguracji)
@@ -110,6 +111,10 @@ $ kcksefcli SzukajFaktur -c kcksefcli.yaml --from "-1week" --to "now" > /tmp/1.j
 ## Konfiguracja
 Szczegóły konfiguracji opisano w pliku [Konfiguracja](docs/Configuration.md).
 **Utworzenie pliku konfiguracyjnego z poświadczeniami jest niezbędne, aby korzystać z komend łączących się bezpośrednio z serwerami KSeF.**
+
+Jeśli uruchamiasz `kcksefcli` przez agenta (np. Claude Code) albo bezobsługowo, przeczytaj
+[**Bezpieczeństwo pracy agentowej**](docs/BezpieczenstwoAgentow.md): domyślne środowisko,
+bramka na operacjach nieodwracalnych i kontrakt ponawiania dla kodu wyjścia `2`.
 
 ## Użycie
 

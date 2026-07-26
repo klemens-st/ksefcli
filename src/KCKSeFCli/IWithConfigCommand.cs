@@ -8,6 +8,8 @@ using KSeF.Client.Core.Interfaces.Services;
 using KSeF.Client.Core.Models.Authorization;
 using KSeF.Client.DI;
 
+using KCKSeFCli.Utils;
+
 using Microsoft.Extensions.DependencyInjection;
 
 namespace KCKSeFCli;
@@ -75,6 +77,40 @@ public abstract class IWithConfigCommand : IGlobalCommand {
     protected TokenStore GetTokenStore() => _tokenStore.Value;
 
     public ProfileConfigWithName Config() => _cachedProfile.Value;
+
+    /// <summary>
+    /// Guard for operations no later command can undo. Throws unless the active environment is
+    /// a pre-production one, the operator passed --yes, or a human at a terminal says so.
+    ///
+    /// Decision logic and its rationale live in
+    /// <see cref="KCKSeFCli.Utils.DangerousOperation"/>; this only carries it out.
+    /// </summary>
+    protected void RequireConfirmation(bool assumeYes, string operation) {
+        string environment = Config().Environment;
+        ConfirmationRequirement requirement = DangerousOperation.Evaluate(
+            environment, assumeYes, interactive: !Console.IsInputRedirected);
+
+        switch (requirement) {
+            case ConfirmationRequirement.NotRequired:
+            case ConfirmationRequirement.SatisfiedByFlag:
+                return;
+
+            case ConfirmationRequirement.Prompt:
+                Console.Error.Write(
+                    $"UWAGA: {operation} w środowisku produkcyjnym ({environment}). "
+                    + "Tej operacji nie da się cofnąć. Kontynuować? [t/N] ");
+                if (DangerousOperation.IsAffirmative(Console.ReadLine())) {
+                    return;
+                }
+                throw new OperationRefusedException($"Anulowano: {operation}.");
+
+            default:
+                throw new OperationRefusedException(
+                    $"Odmowa: {operation} w środowisku produkcyjnym ({environment}) bez terminala. "
+                    + "Uruchom polecenie interaktywnie albo podaj --yes, jeśli świadomie "
+                    + "autoryzujesz tę operację. Zobacz docs/BezpieczenstwoAgentow.md.");
+        }
+    }
 
     public TokenStore.Key GetTokenStoreKey() {
         ProfileConfigWithName config = Config();

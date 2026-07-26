@@ -81,6 +81,11 @@ public class Program {
                     return Task.FromResult(1);
                 }
             ).ConfigureAwait(false);
+        } catch (KCKSeFCli.Utils.OperationRefusedException ex) {
+            // A declined or unauthorised operation is an ordinary failure, not a crash. Exit 3
+            // is reserved for unhandled exceptions, and a stack trace would bury the message.
+            Console.Error.WriteLine(ex.Message);
+            return 1;
         } catch (Exception ex) {
             Console.Error.WriteLine(ex.StackTrace);
             Console.Error.WriteLine(ex.Message);

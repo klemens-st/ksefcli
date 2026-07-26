@@ -41,6 +41,9 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
     [Option("no-local-rate-limit", HelpText = "Wyłącz lokalne ograniczanie liczby zapytań do API.")]
     public bool NoLocalRateLimit { get; set; }
 
+    [Option("yes", HelpText = "Potwierdź nieodwracalną operację w środowisku produkcyjnym bez pytania.")]
+    public bool AssumeYes { get; set; }
+
     public static IEnumerable<(string FileName, byte[] Content)> GetFilesWithContent(IEnumerable<string> paths) {
         return paths.Select(path => (
             FileName: Path.GetFileName(path),
@@ -254,6 +257,10 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
     }
 
     public override async Task<int> ExecuteInScopeAsync(IServiceScope scope, CancellationToken cancellationToken) {
+        // First statement on purpose: filing an invoice with KSeF cannot be undone, and a
+        // partial batch (exit code 2) cannot be safely retried either.
+        RequireConfirmation(AssumeYes, $"wysłanie {Pliki.Count()} faktur do KSeF");
+
         XML2PDFCommand.Runner? pdfRunner = null;
         if (UpoPdf) {
             pdfRunner = await XML2PDFCommand.GetRunner(cancellationToken).ConfigureAwait(false);

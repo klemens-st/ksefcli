@@ -231,6 +231,44 @@ clitest_wystawkorekte() {
     rm "$OUTPUT_FILE"
 }
 
+# The production confirmation gate, end to end. The point of the gate is what happens with no
+# terminal attached, which is how an agent runs, so these pipe stdin from /dev/null.
+# The gate runs before authentication, so no network is involved and the fake token is never
+# sent anywhere.
+clitest_prod_upload_refused_without_terminal() {
+    local output
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \
+        cli PrzeslijFaktury -a token_prod "$DIR/FA_3_Przykład_1.xml" </dev/null
+    L_unittest_cmd -I grep -q "Odmowa" <<<"$output"
+    # Exit code 3 means "unhandled exception"; a refusal is an ordinary failure, and the
+    # operator needs the message rather than a stack trace.
+    L_unittest_cmd -I ! grep -q "at KCKSeFCli" <<<"$output"
+}
+
+clitest_prod_upload_allowed_with_yes() {
+    local output
+    # --yes gets past the gate. The command then fails at authentication with a fake token,
+    # which is the proof that the gate is no longer what stopped it.
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output \
+        ! cli PrzeslijFaktury --yes -a token_prod "$DIR/FA_3_Przykład_1.xml" </dev/null || true
+    L_unittest_cmd -I ! grep -q "Odmowa" <<<"$output"
+}
+
+clitest_test_env_upload_not_gated() {
+    local output
+    # Non-production must not be gated at all, otherwise agents cannot work unattended.
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output \
+        ! cli PrzeslijFaktury -a token_test "$DIR/FA_3_Przykład_1.xml" </dev/null || true
+    L_unittest_cmd -I ! grep -q "Odmowa" <<<"$output"
+}
+
+clitest_prod_revoke_refused_without_terminal() {
+    local output
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \
+        cli UniewaznijCertyfikat -a token_prod 0123456789 </dev/null
+    L_unittest_cmd -I grep -q "Odmowa" <<<"$output"
+}
+
 # Regression tests for the test harness itself. tests/lib.sh downloads ~11k lines of
 # third-party bash (L_lib.sh) over the network and sources it into this shell. An unverified
 # download that is then executed is the same defect class the PDF generator had before it was

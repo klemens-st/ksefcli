@@ -11,6 +11,12 @@ profiles:
     environment: test
     nip: '9876543210'
     token: 'test_token_value'
+  # Only used to exercise the production confirmation gate. The gate runs before anything
+  # touches the network, so this token is never sent anywhere.
+  token_prod:
+    environment: prod
+    nip: '9876543210'
+    token: 'test_token_value'
   token_no_nip_test:
     environment: test
     token: 'test_token_value|nip-5252611332|fdnsjfa'

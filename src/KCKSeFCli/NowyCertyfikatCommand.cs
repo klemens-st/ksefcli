@@ -33,7 +33,14 @@ public class NowyCertyfikatCommand : IWithConfigCommand {
     [Option("validFrom", HelpText = "Start date for certificate validity (e.g., 2023-01-01). If not provided, current date is used.")]
     public string? ValidFrom { get; set; }
 
+    [Option("yes", HelpText = "Potwierdź nieodwracalną operację w środowisku produkcyjnym bez pytania.")]
+    public bool AssumeYes { get; set; }
+
     public override async Task<int> ExecuteInScopeAsync(IServiceScope scope, CancellationToken cancellationToken) {
+        // Enrolment draws on a limited quota (see SprawdzLimitCertyfikatow), so an agent looping
+        // on this burns something a later command cannot give back.
+        RequireConfirmation(AssumeYes, $"wystawienie nowego certyfikatu {CertificateName}");
+
         IKSeFClient ksefClient = scope.ServiceProvider.GetRequiredService<IKSeFClient>();
         ICryptographyService cryptographyService = await GetCryptographicService(scope, cancellationToken).ConfigureAwait(false);
         string accessToken = await GetAccessToken(scope, cancellationToken).ConfigureAwait(false);
