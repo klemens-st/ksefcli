@@ -157,6 +157,55 @@ clitest_dodaj_pozycje() {
     L_unittest_vareq p15 "3281.00"
 }
 
+# The 5% band, end to end. Before rate bands were mapped, only "22" and "23" were recognised:
+# a 5% item left P_13_3/P_14_3 untouched and landed in P_15 with zero VAT, understating the
+# invoice. The fixture starts at P_13_3=0.95, P_14_3=0.05, P_15=2051.
+clitest_dodaj_pozycje_stawka_5() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    L_unittest_cmd cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Pozycja 5%" --miara "szt" --ilosc 2 --cena-netto 50.00 --stawka-vat 5
+
+    local p13_3 p14_3 p15
+    L_unittest_cmd -v p13_3 cli XMLExtract out.xml "/Faktura/Fa/P_13_3"
+    L_unittest_cmd -v p14_3 cli XMLExtract out.xml "/Faktura/Fa/P_14_3"
+    L_unittest_cmd -v p15 cli XMLExtract out.xml "/Faktura/Fa/P_15"
+
+    # 100.00 net at 5% is 5.00 VAT.
+    L_unittest_vareq p13_3 "100.95"
+    L_unittest_vareq p14_3 "5.05"
+    L_unittest_vareq p15 "2156.00"
+
+    # The 23% band must not have been touched.
+    local p13_1
+    L_unittest_cmd -v p13_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_1"
+    L_unittest_vareq p13_1 "1666.66"
+}
+
+clitest_dodaj_pozycje_stawka_nieobslugiwana() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    local output
+    # "zw" has no P_13_x/P_14_x pair. It used to be treated as 0% VAT and silently added to
+    # P_15 alone, leaving the invoice inconsistent.
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Zwolniona" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat zw
+    L_unittest_cmd -I grep -q "nie jest obsługiwana" <<<"$output"
+    L_unittest_cmd -I ! test -e out.xml
+}
+
+clitest_dodaj_pozycje_brak_pol_sumujacych() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    local output
+    # The fixture has no P_13_2/P_14_2, so an 8% item cannot be totalled without inserting new
+    # elements in schema order. Refuse rather than unbalance the invoice.
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Pozycja 8%" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat 8
+    L_unittest_cmd -I grep -q "P_13_2" <<<"$output"
+    L_unittest_cmd -I ! test -e out.xml
+}
+
 clitest_nowa_faktura() {
     L_with_cd_tmpdir
     L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice.yaml invoice.xml

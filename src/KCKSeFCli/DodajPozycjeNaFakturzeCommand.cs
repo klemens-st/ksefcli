@@ -3,6 +3,8 @@ using System.Xml.Linq;
 
 using CommandLine;
 
+using KCKSeFCli.Utils;
+
 namespace KCKSeFCli;
 
 [Verb("DodajPozycjeNaFakturze", HelpText = "Add a new item to an existing KSeF XML invoice.")]
@@ -58,8 +60,22 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
             return 1;
         }
 
+        // Rates without a P_13_x/P_14_x pair (0%, zw, np, oo) record their net elsewhere. The
+        // old code silently treated them as 0% VAT and only touched P_15, which understated the
+        // total and left the invoice internally inconsistent. Refuse instead: a loud error beats
+        // a plausible-looking invoice filed with the tax authority.
+        InvoiceTotals.VatBand? band = InvoiceTotals.BandForRate(StawkaVat);
+        if (band is null) {
+            Log.Error($"Błąd: stawka VAT '{StawkaVat}' nie jest obsługiwana przez to polecenie. "
+                      + $"Obsługiwane stawki: {InvoiceTotals.SupportedRates}. "
+                      + "Pozycje ze stawką 0%, zw, np lub odwrotnym obciążeniem trafiają do "
+                      + "innych pól sumujących i trzeba je dodać ręcznie.");
+            return 1;
+        }
+
         int newWierszId = int.Parse(lastWiersz.Element(ns + "NrWierszaFa")?.Value ?? "0") + 1;
-        decimal wartoscNetto = Ilosc * CenaNetto;
+        decimal wartoscNetto = InvoiceTotals.LineNet(Ilosc, CenaNetto);
+        decimal wartoscVat = InvoiceTotals.VatFor(wartoscNetto, band.Value.Percent);
 
         XElement newFaWiersz = new XElement(ns + "FaWiersz",
             new XElement(ns + "NrWierszaFa", newWierszId.ToString()),
@@ -67,33 +83,31 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
             new XElement(ns + "P_8A", Miara),
             new XElement(ns + "P_8B", Ilosc.ToString("F2", CultureInfo.InvariantCulture)),
             new XElement(ns + "P_9A", CenaNetto.ToString("F2", CultureInfo.InvariantCulture)),
-            new XElement(ns + "P_11", wartoscNetto.ToString("F2", CultureInfo.InvariantCulture)),
+            new XElement(ns + "P_11", InvoiceTotals.Format(wartoscNetto)),
             new XElement(ns + "P_12", StawkaVat)
         );
 
+        // Each rate band has its own net/VAT pair, so a 5% item updates P_13_3/P_14_3 rather
+        // than being dropped on the floor as it was before. FA(3) only carries the bands the
+        // invoice actually uses, and inserting a new pair means placing it correctly in the
+        // schema sequence — so if the band is absent, refuse rather than leave the invoice
+        // unbalanced. Checked before any mutation, so a refusal changes nothing.
+        string[] required = [band.Value.NetField, band.Value.VatField, "P_15"];
+        List<string> missing = required.Where(f => fa.Element(ns + f) is null).ToList();
+        if (missing.Count > 0) {
+            Log.Error($"Błąd: faktura nie zawiera pól sumujących {string.Join(", ", missing)}, "
+                      + $"wymaganych dla stawki {StawkaVat}%. Dodanie pozycji rozjechałoby sumy. "
+                      + "Uzupełnij te pola w fakturze wejściowej.");
+            return 1;
+        }
+
         lastWiersz.AddAfterSelf(newFaWiersz);
 
-        if (StawkaVat == "23" || StawkaVat == "22") {
-            XElement? p13_1 = fa.Element(ns + "P_13_1");
-            if (p13_1 != null) {
-                decimal currentValue = decimal.Parse(p13_1.Value, CultureInfo.InvariantCulture);
-                p13_1.Value = (currentValue + wartoscNetto).ToString("F2", CultureInfo.InvariantCulture);
-            }
-
-            XElement? p14_1 = fa.Element(ns + "P_14_1");
-            if (p14_1 != null) {
-                decimal currentVat = decimal.Parse(p14_1.Value, CultureInfo.InvariantCulture);
-                decimal newVat = wartoscNetto * (decimal.Parse(StawkaVat, CultureInfo.InvariantCulture) / 100);
-                p14_1.Value = (currentVat + newVat).ToString("F2", CultureInfo.InvariantCulture);
-            }
-        }
-
-        XElement? p15 = fa.Element(ns + "P_15");
-        if (p15 != null) {
-            decimal currentTotal = decimal.Parse(p15.Value, CultureInfo.InvariantCulture);
-            decimal newVat = (StawkaVat == "23" || StawkaVat == "22") ? wartoscNetto * (decimal.Parse(StawkaVat, CultureInfo.InvariantCulture) / 100) : 0;
-            p15.Value = (currentTotal + wartoscNetto + newVat).ToString("F2", CultureInfo.InvariantCulture);
-        }
+        AddToTotal(fa, ns, band.Value.NetField, wartoscNetto);
+        AddToTotal(fa, ns, band.Value.VatField, wartoscVat);
+        // wartoscVat is already rounded, so the printed total matches the printed components
+        // exactly. Adding the raw product here could leave P_15 a grosz off.
+        AddToTotal(fa, ns, "P_15", wartoscNetto + wartoscVat);
 
         doc = MyXml.Normalize(doc);
         string newXml = MyXml.XmlToString(doc);
@@ -114,5 +128,14 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Dodaje kwotę do pola sumującego. Obecność pola jest sprawdzana przed jakąkolwiek
+    /// modyfikacją dokumentu, więc tutaj jest już pewna.
+    /// </summary>
+    private static void AddToTotal(XElement fa, XNamespace ns, string field, decimal amount) {
+        XElement element = fa.Element(ns + field)!;
+        element.Value = InvoiceTotals.Format(InvoiceTotals.Parse(element.Value) + amount);
     }
 }

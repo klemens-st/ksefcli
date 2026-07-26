@@ -1,0 +1,77 @@
+#nullable enable
+using System.Globalization;
+
+namespace KCKSeFCli.Utils;
+
+/// <summary>
+/// Arytmetyka kwot dla FA(3): przypisanie stawki VAT do pary pól P_13_x / P_14_x oraz
+/// zaokrąglanie do pełnych groszy.
+///
+/// Pure logic on purpose — the alternative is only reachable through a command that reads and
+/// writes files.
+/// </summary>
+public static class InvoiceTotals {
+    /// <summary>Para pól sumujących dla jednej stawki VAT.</summary>
+    public readonly record struct VatBand(int Percent, string NetField, string VatField);
+
+    /// <summary>
+    /// FA(3) keeps a separate net/VAT pair per rate band. Only the bands that actually have
+    /// both fields are listed: 0%, zw, np and odwrotne obciążenie report their net in different
+    /// elements and carry no VAT, so they are deliberately absent rather than guessed at.
+    /// </summary>
+    private static readonly Dictionary<int, VatBand> Bands = new() {
+        // Stawka podstawowa, obecnie 23% (22% w starszych fakturach).
+        [23] = new VatBand(23, "P_13_1", "P_14_1"),
+        [22] = new VatBand(22, "P_13_1", "P_14_1"),
+        // Stawka obniżona pierwsza, obecnie 8% (7% historycznie).
+        [8] = new VatBand(8, "P_13_2", "P_14_2"),
+        [7] = new VatBand(7, "P_13_2", "P_14_2"),
+        // Stawka obniżona druga.
+        [5] = new VatBand(5, "P_13_3", "P_14_3"),
+        // Ryczałt dla rolnika ryczałtowego.
+        [4] = new VatBand(4, "P_13_4", "P_14_4"),
+    };
+
+    /// <summary>
+    /// Zwraca pola sumujące dla podanej stawki albo <c>null</c>, jeśli stawka nie ma pary
+    /// netto/VAT. Wywołujący ma wtedy odmówić, a nie zakładać zerowy VAT.
+    /// </summary>
+    public static VatBand? BandForRate(string? rate) {
+        string normalized = (rate ?? "").Trim().TrimEnd('%').Trim();
+        if (!int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out int percent)) {
+            return null;
+        }
+        return Bands.TryGetValue(percent, out VatBand band) ? band : null;
+    }
+
+    /// <summary>Nazwy stawek, które obsługujemy — do komunikatu o błędzie.</summary>
+    public static string SupportedRates =>
+        string.Join(", ", Bands.Keys.OrderByDescending(k => k).Select(k => k + "%"));
+
+    /// <summary>
+    /// Zaokrąglenie do pełnych groszy. Połówki w górę co do modułu, zgodnie z praktyką
+    /// podatkową — <c>Math.Round</c> domyślnie zaokrągla do parzystych, co dawałoby inne kwoty.
+    /// </summary>
+    public static decimal RoundMoney(decimal value) =>
+        Math.Round(value, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// VAT od kwoty netto, już zaokrąglony. Zaokrąglenie musi nastąpić tutaj, a nie dopiero
+    /// przy formatowaniu: suma P_15 dodaje tę wartość, więc niezaokrąglona rozjeżdżałaby się
+    /// z tym, co widnieje w P_14_x.
+    /// </summary>
+    public static decimal VatFor(decimal net, int percent) =>
+        RoundMoney(net * percent / 100m);
+
+    /// <summary>Wartość netto pozycji, zaokrąglona zanim trafi do sum.</summary>
+    public static decimal LineNet(decimal quantity, decimal unitPrice) =>
+        RoundMoney(quantity * unitPrice);
+
+    /// <summary>Formatowanie kwoty do XML — zawsze dwie cyfry po kropce, niezależnie od locale.</summary>
+    public static string Format(decimal value) =>
+        value.ToString("F2", CultureInfo.InvariantCulture);
+
+    /// <summary>Parsowanie kwoty z XML — zawsze kropka dziesiętna, niezależnie od locale.</summary>
+    public static decimal Parse(string value) =>
+        decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
+}
