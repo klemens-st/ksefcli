@@ -177,7 +177,10 @@ testlib_profile_nip() {
 	printf '%s\n' "$nip"
 }
 
-# testlib_make_invoice <profile> <template.xml> <output.xml>
+# testlib_make_invoice <profile> <template.xml> <output.xml> [buyer_nip]
+#
+# Writes <output.xml> and echoes the invoice number (P_2) it generated, so a test can search
+# KSeF for exactly the invoice it just filed.
 #
 # Integration tests file real invoices in the name of whoever's credentials are configured, so
 # the seller NIP cannot be a fixture constant: KSeF rejects an invoice whose Podmiot1 is not
@@ -185,13 +188,80 @@ testlib_profile_nip() {
 # needed for the invoice to be accepted — P_2 because a repeated invoice number is refused as a
 # duplicate, Podmiot1/NIP because of that permission check. The template keeps its own NIP so
 # that the offline unit tests and tests/expected_korekta.xml stay byte-stable.
+#
+# The generated number is a bare timestamp deliberately: it survives SafePath.SafeFileName
+# unchanged, so PobierzFaktury --useInvoiceNumber writes a filename the caller can predict.
+# The template's own "FV2026/02/150" would not — the slashes become underscores.
 testlib_make_invoice() {
-	local profile=$1 template=$2 output=$3 nip
+	local profile=$1 template=$2 output=$3 buyer_nip=${4:-} nip number
 	nip=$(testlib_profile_nip "$profile")
-	# The seller substitution is confined to Podmiot1; Podmiot2 is the buyer, which is not
-	# subject to the permission check and is left as the template has it.
-	sed -e "s|<P_2>.*<|<P_2>$(date +%s.%N)<|" \
+	number=$(date +%s.%N)
+	# The seller substitution is confined to Podmiot1; the buyer one to Podmiot2, and only
+	# when asked, because the buyer is not subject to the permission check.
+	sed -e "s|<P_2>.*<|<P_2>$number<|" \
 		-e "/<Podmiot1>/,/<\/Podmiot1>/ s|<NIP>[0-9]*</NIP>|<NIP>$nip</NIP>|" \
 		"$template" >"$output"
+	if [[ -n "$buyer_nip" ]]; then
+		sed -i "/<Podmiot2>/,/<\/Podmiot2>/ s|<NIP>[0-9]*</NIP>|<NIP>$buyer_nip</NIP>|" "$output"
+	fi
+	printf '%s\n' "$number"
+}
+
+# The date range an integration test has to search by. The fixtures carry a fixed P_1 — 2026-02-15
+# in FA_3_Przykład_1.xml — so the default dateType=Issue cannot find an invoice filed today: it
+# filters on the invoice's own issue date, not on when KSeF accepted it. Invoicing is the date of
+# acceptance into KSeF, which is what "the invoice I just filed" means.
+testlib_recent_range() {
+	printf '%s\n' --dateType Invoicing --from "$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S+00:00)"
+}
+
+# testlib_find_invoice <profile> <invoice_number> <subject_type> — echoes the SzukajFaktur JSON
+# for that one invoice, retrying until KSeF's query API has indexed it.
+#
+# PrzeslijFaktury returns once the invoice is processed and has a KSeF number, but the query API
+# lags behind that by a few seconds, so a single search right after filing is a coin flip. The
+# empty result is exactly "[]", which is what makes the wait testable without parsing JSON.
+#
+# A failed search is never retried: stderr is left attached to the test log, and a non-zero exit
+# aborts at once. Retrying it would spend the whole timeout turning "the token is invalid" into
+# "the invoice never appeared", which is how the first version of this helper misreported a
+# dateType bug.
+#
+# The budget is wall clock, not an attempt count, so the worst case is what it says it is —
+# an attempt count silently multiplies by however long each query takes. Override with
+# KCKSEFCLI_TEST_INDEX_TIMEOUT. Every attempt is logged, because L_lib buffers a test's output
+# until the test ends: without this, a long wait is indistinguishable from a hang.
+testlib_find_invoice() {
+	local profile=$1 number=$2 subject=$3 output rc deadline attempt=0
+	local -a range
+	mapfile -t range < <(testlib_recent_range)
+	deadline=$(($(date +%s) + ${KCKSEFCLI_TEST_INDEX_TIMEOUT:-90}))
+	while :; do
+		attempt=$((attempt + 1))
+		rc=0
+		output=$("${opt_exe[@]}" SzukajFaktur -a "$profile" -s "$subject" \
+			"${range[@]}" --invoiceNumber "$number") || rc=$?
+		if ((rc != 0)); then
+			L_fatal "SzukajFaktur for profile '$profile' exited with $rc; see its output above"
+		fi
+		if [[ -n "$output" && "$output" != "[]" ]]; then
+			L_log "Invoice $number found as $subject on attempt $attempt"
+			printf '%s\n' "$output"
+			return 0
+		fi
+		if (($(date +%s) >= deadline)); then
+			break
+		fi
+		L_log "Attempt $attempt: $number not indexed yet for '$profile' as $subject, retrying"
+		sleep 5
+	done
+	# Distinguish "not visible to this profile at all" from "the --invoiceNumber filter did not
+	# match", which look identical from inside the loop and need opposite fixes.
+	local unfiltered
+	unfiltered=$("${opt_exe[@]}" SzukajFaktur -a "$profile" -s "$subject" "${range[@]}") || true
+	if [[ "$unfiltered" == *"$number"* ]]; then
+		L_fatal "Invoice $number is visible to '$profile' as $subject but --invoiceNumber '$number' does not match it"
+	fi
+	L_fatal "Invoice $number never became visible to profile '$profile' as $subject (unfiltered search: ${unfiltered:-<empty>})"
 }
 
