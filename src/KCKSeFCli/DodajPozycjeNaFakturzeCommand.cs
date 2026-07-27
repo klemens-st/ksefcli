@@ -27,11 +27,10 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
     [Option("cena-netto", Required = true, HelpText = "Unit net price (P_9A).")]
     public required decimal CenaNetto { get; set; }
 
-    // Wymieniamy dokładnie te stawki, które polecenie przyjmuje. Warianty stawki zerowej są tu
-    // opisane, a nie wypisane dosłownie, bo clitest_dodaj_pozycje_help_nie_obiecuje_stawki_zero
-    // odrzuca każde "0" otoczone spacjami — a tak właśnie wygląda "0 KR". Pełną listę podaje
-    // komunikat o błędnej stawce (InvoiceTotals.SupportedRates).
-    [Option("stawka-vat", Required = true, HelpText = "Stawka VAT (P_12): 23, 22, 8, 7, 5, 4 oraz stawki zerowe w wariantach KR, WDT i EX. Pozycje zw, oo i np trzeba uzupełnić ręcznie.")]
+    // Wymieniamy dokładnie te stawki, które polecenie przyjmuje — łącznie z wariantami stawki
+    // zerowej, bo operator musi wiedzieć, że wpisuje się je z rodzajem transakcji. Samo "0"
+    // celowo się tu nie pojawia: TStawkaPodatku go nie zna.
+    [Option("stawka-vat", Required = true, HelpText = "Stawka VAT (P_12): 23, 22, 8, 7, 5, 4 oraz stawki zerowe 0 KR, 0 WDT i 0 EX. Pozycje zw, oo i np trzeba uzupełnić ręcznie.")]
     public required string StawkaVat { get; set; }
 
     [Option("bez-walidacji", Required = false, HelpText = "Skip XML validation after adding the item.")]

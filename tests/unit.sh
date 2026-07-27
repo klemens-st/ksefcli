@@ -354,18 +354,25 @@ clitest_dodaj_pozycje_nie_zapisuje_niepoprawnego_xml() {
 
 # --help must not offer a rate the command refuses.
 #
-# 0% has no P_13_x/P_14_x pair, so the command refuses it (clitest_dodaj_pozycje_stawka_
-# nieobslugiwana pins the refusal). Advertising it in --help sent the operator straight into
-# that refusal. The repo convention also asks for Polish HelpText on any option touched.
+# A bare "0" is not in TStawkaPodatku at all, so the command refuses it and the help must not
+# promise it. The three real zero rates — "0 KR", "0 WDT", "0 EX" — ARE accepted, and the help
+# should name them, so they are stripped before the check rather than being caught by it.
+#
+# That exclusion is the whole subtlety here. The pattern below matches a "0" delimited by
+# spaces, which is exactly the shape of "0 KR", so without stripping them first this test would
+# reject a correct help string. Strip by the full token, not by a lone "0", or "0 KRX" would
+# slip through.
 clitest_dodaj_pozycje_help_nie_obiecuje_stawki_zero() {
     local output
     L_unittest_cmd -v output cli DodajPozycjeNaFakturze --help
     local stawka_line
     stawka_line=$(grep -- "--stawka-vat" <<<"$output" || true)
     [[ -n "$stawka_line" ]] || fatal "No --stawka-vat line in the help output"
+    local bez_stawek_zerowych
+    bez_stawek_zerowych=$(sed -E 's/\b0 (KR|WDT|EX)\b//g' <<<"$stawka_line")
     # The trailing %? matters: rewriting the HelpText as "np. 23, 8, 5, 0%." would otherwise
     # slip past this test while still advertising a rate the command refuses.
-    L_unittest_cmd -I ! grep -qE '(^|[ ,])0%?([ ,.]|$)' <<<"$stawka_line"
+    L_unittest_cmd -I ! grep -qE '(^|[ ,])0%?([ ,.]|$)' <<<"$bez_stawek_zerowych"
 }
 
 clitest_nowa_faktura() {
