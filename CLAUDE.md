@@ -21,11 +21,11 @@ Needs network to `api.nuget.org` and `github.com`.
 dotnet build                                                   # WHOLE solution — see gotcha 1
 dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 224 tests
 dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
-./tests/unit.sh ./dist/kcksefcli                                # 61 CLI tests (publish first)
+./tests/unit.sh ./dist/kcksefcli                                # 62 CLI tests (publish first)
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
-The 61 come from three files: `unit.sh` (52) sources `cmdauth.sh` (3) and `test_parsedate.sh` (6).
+The 62 come from three files: `unit.sh` (53) sources `cmdauth.sh` (3) and `test_parsedate.sh` (6).
 Called with no binary path, `unit.sh` runs `make build` and tests the `cli` symlink (Debug) instead.
 
 **`tests/integration.sh` and `tests/ci.sh` cannot be run from an agent session.**
