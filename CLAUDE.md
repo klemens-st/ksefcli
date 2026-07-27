@@ -34,7 +34,6 @@ whenever `KCLLM` is set, before anything else. They file real invoices against t
 environment with credentials found at `.git/KSEF/kcksefcli.yaml` (or `.git/kcksefcli.yaml`,
 `.git/secrets/`, `.git/secret/`, `secrets/`). `ci.sh` is `integration.sh` minus
 `clitest_z_integration_PobierzFaktury_prod`, which is the one test that touches **production**.
-`./run.sh` loads the same config, so it is a human's tool too.
 
 ## Layout
 
