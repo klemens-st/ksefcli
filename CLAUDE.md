@@ -368,3 +368,47 @@ run cancel each other's gate.
   template on GitLab (gotcha 2 and 6): it would be red on an untouched tree.
 - The check-run name is `test / build-and-test` (`<caller job id> / <called job name>`).
   Renaming either job silently orphans any required status check configured on `main`.
+
+## Submodule bump automation
+
+`.github/workflows/submodule-bump.yml` opens a **draft** PR when `CIRFMF/ksef-client-csharp`
+publishes a new stable release. Daily cron at `04:17` UTC plus `workflow_dispatch`.
+
+- **A version is a tag matching `^[0-9]+\.[0-9]+\.[0-9]+$`.** Upstream also carries a dead
+  `RC5.x`/`RC6.x` prerelease line that sorts unpredictably against the `2.x` releases; the
+  regex excludes it, and keeps excluding whatever prerelease convention comes next. Detection
+  is one `git ls-remote --tags` — no clone, and it exits in seconds on the days nothing moved.
+- **Compared by SHA, not tag name**, so a moved tag registers and a renamed one does not.
+- **`ci.yml` triggers on `push: deps/**` and that is load-bearing.** A PR opened by
+  `GITHUB_TOKEN` does not fire `pull_request`, so without it a bump PR would carry no checks
+  at all. Check runs attach to a commit SHA rather than an event, so the push-triggered run
+  surfaces on the PR and satisfies a required `test / build-and-test` check exactly as a
+  `pull_request` run would. The alternative is a PAT or GitHub App token; the push trigger
+  buys the same gate with no credential. **Do not add triggers or `secrets:` to `test.yml`** —
+  a reusable workflow always checks out the *caller's* ref, so calling it from the bump
+  workflow would test `main`, not the bump.
+- **The workflow does not run the build and does not fix anything.** A red PR is an expected
+  outcome: the one bump in history (`eb30f82`, v2.2.0 -> v2.7.0) cost a compile error when
+  `AuthenticationKsefTokenRequest.AuthorizationPolicy` became non-nullable. What is being
+  bought is early, per-release notice instead of noticing five versions deep.
+- The pointer moves via `git update-index --cacheinfo 160000,<sha>,<path>` — the submodule is
+  never checked out. A separate `--filter=blob:none --no-checkout` clone serves the analysis
+  (blobless, not shallow: it diffs two tags that can be months apart).
+- The PR body pre-computes four things, and they are the reason this is not Dependabot:
+  the **`System.Security.Cryptography.Xml` pin** vs the highest version the submodule declares
+  (warns only if upstream goes *above* the pin, which would make the pin a silent downgrade);
+  whether the five hardcoded submodule paths in **`kcksefcli.slnx`** still resolve (a rename
+  upstream breaks `dotnet restore` before anything compiles); **churn in the vendored copies**
+  under `src/KCKSeFCli/Utils/`, discovered from each file's `// Copied from <path>` header so
+  a newly vendored file is covered the day it lands; and the upstream `*.csproj` diffstat.
+- Upstream release notes are **fenced and truncated** — third-party prose landing in a PR that
+  agents read, so it must not render as headings or task lists of its own.
+- Dedup is `--state all`, not `--state open`: a bump PR closed unmerged was rejected on
+  purpose. Deleting the branch is how you ask for it again.
+- The generated message is checked against `.githooks/commit-msg` explicitly. `core.hooksPath`
+  is unversioned local config set by `make install-hooks`, so a runner has no hook installed
+  and the one commit nobody reviews before it is written would otherwise skip the gate.
+- **Dependabot's `gitsubmodule` ecosystem was considered and rejected**: it tracks the branch
+  tip, not tags, so it would fire on every non-release commit to upstream `main`, and it can
+  compute none of the four checks above. It looks equivalent today only because upstream
+  `main` HEAD currently *is* the latest tag.
