@@ -237,13 +237,72 @@ clitest_dodaj_pozycje_stawka_z_procentem() {
 # 0% has no P_13_x/P_14_x pair, so the command refuses it (clitest_dodaj_pozycje_stawka_
 # nieobslugiwana pins the refusal). Advertising it in --help sends the operator straight into
 # that refusal. The repo convention also asks for Polish HelpText on any option touched.
+# OPEN FINDING — the CLI intermittently loses ALL of its log output.
+#
+# Log.ConfigureLogging builds an ILoggerFactory with AddConsole, whose provider queues messages
+# onto a background writer thread. The factory is stored in a static and never disposed, and
+# Program.Main returns its exit code straight to the runtime, so whatever is still queued when
+# the process exits is discarded. The failure is all-or-nothing: the run reports exit 1 and
+# prints nothing at all about why.
+#
+# That matters most for exactly the use this fork is hardened for. An agent that gets a bare
+# exit 1 with no message has nothing to act on, and the natural response — retry — is the wrong
+# one for a command that files invoices.
+#
+# Measured on this tree at ~6% of runs (6/100, and 5/100 on a second sample). Disposing the
+# factory before Main returns takes it to 0 misses in 330 runs. This test is therefore
+# probabilistic in one direction only: with the fix in place it is not expected to fail at all,
+# while without it 40 iterations catch the defect about 9 times in 10. It is deliberately not
+# the whole suite's worth of iterations — a cheap sentinel beats a slow certainty here.
+#
+# It is also the true cause of the intermittent failures seen in this suite, which land on
+# whichever Log-dependent test happens to lose the race. It is NOT xUnit test parallelism: the
+# bash suite is a separate process and shares no state with the xUnit run.
+clitest_log_nie_gubi_komunikatow() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    local i output puste=0
+    for i in $(seq 1 40); do
+        rm -f out.xml
+        # Refused before any write, and the refusal goes through Log.Error — so every run must
+        # print it. 8% has no P_13_2/P_14_2 pair in this fixture.
+        output=$(cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+            --nazwa "Pozycja" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat 8 2>&1 || true)
+        grep -q "P_13_2" <<<"$output" || puste=$((puste + 1))
+    done
+    L_unittest_vareq puste "0"
+}
+
+# DodajPozycjeNaFakturze writes the output file and validates it afterwards
+# (DodajPozycjeNaFakturzeCommand.cs:115 then :118), so every validation failure leaves invalid
+# XML on disk and still reports failure. WystawKorekte does the reverse — validate, return 1,
+# then write — and that is the order the repo should be consistent about, because the output of
+# a failed run is what an agent picks up and files next.
+#
+# P_7 is TZnakowy512, so an over-long name fails validation without needing the network and
+# without depending on the separate P_12 finding.
+clitest_dodaj_pozycje_nie_zapisuje_niepoprawnego_xml() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    local dluga_nazwa
+    dluga_nazwa=$(printf 'x%.0s' {1..600})
+
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "$dluga_nazwa" --miara "szt" --ilosc 1 --cena-netto 100.00 --stawka-vat 23
+
+    # The run failed, so it must not have left a file behind for the next step to pick up.
+    L_unittest_success test ! -e out.xml
+}
+
 clitest_dodaj_pozycje_help_nie_obiecuje_stawki_zero() {
     local output
     L_unittest_cmd -v output cli DodajPozycjeNaFakturze --help
     local stawka_line
     stawka_line=$(grep -- "--stawka-vat" <<<"$output" || true)
     [[ -n "$stawka_line" ]] || fatal "No --stawka-vat line in the help output"
-    L_unittest_cmd -I ! grep -qE '(^|[ ,])0([ ,.]|$)' <<<"$stawka_line"
+    # The trailing %? matters: rewriting the HelpText as "np. 23, 8, 5, 0%." would otherwise
+    # slip past this test while still advertising a rate the command refuses.
+    L_unittest_cmd -I ! grep -qE '(^|[ ,])0%?([ ,.]|$)' <<<"$stawka_line"
 }
 
 clitest_nowa_faktura() {

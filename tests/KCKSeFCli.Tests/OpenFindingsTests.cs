@@ -11,6 +11,17 @@
 // way to satisfy the test above it would be to drop one of the two colliding bands, and that
 // would trade a double-write for a silently missing band. Both must hold at once.
 //
+// Two further findings are pinned in tests/unit.sh rather than here, because both are about
+// what the process does on the way out and neither is reachable from a unit test:
+//
+//   * The console logger is never flushed, so the CLI intermittently exits having printed
+//     nothing at all (~6% of runs). clitest_log_nie_gubi_komunikatow. This is also the real
+//     cause of the intermittent failures in the bash suite — not xUnit parallelism, which
+//     cannot reach a separate process.
+//   * DodajPozycjeNaFakturze writes its output file before validating it, so a failed run
+//     leaves invalid XML on disk; WystawKorekte does the reverse.
+//     clitest_dodaj_pozycje_nie_zapisuje_niepoprawnego_xml.
+//
 // Findings that are NOT represented here, and why:
 //
 //   * The P_13_4 comment in InvoiceTotals mislabels the band ("rolnik ryczałtowy"; the schema
@@ -54,6 +65,7 @@ using Xunit;
 
 namespace KCKSeFCli.Tests;
 
+[Collection(RateLimitTrackerCollection.Name)]
 public class OpenFindingsTests {
     // High-limit endpoint (30/s, 120/min, 720/h) so the local throttle never sleeps here, the
     // same choice KsefRateLimitWrapperTests makes. The trackers are process-wide statics.
@@ -76,9 +88,18 @@ public class OpenFindingsTests {
     // style elsewhere (DodajPozycjeNaFakturze refusing unsupported rates) is to refuse.
     //
     // The assertion below is deliberately about the *shape of the result*, not about how the
-    // conflict is reported: two totals must never target one element. A fix that instead
-    // refuses by throwing is equally acceptable — change this to Assert.Throws if that is the
-    // route taken.
+    // conflict is reported: two totals must never target one element.
+    //
+    // The fix must merge, not refuse. Merging is what NowaFakturaCommand already does inline
+    // (it groups on NetField and accumulates Net and Vat separately), so the band-keyed
+    // Summarize is the odd one out, and hoisting that merge here lets the command drop its own
+    // copy of invoice math. Refusing would also be wrong for WystawKorekte, which reads
+    // historical XML it did not write and can compute the right answer without guessing.
+    //
+    // Critically, the merge must accumulate VAT **per rate** and sum it into the band. It must
+    // not recompute VAT from the merged net against a single percent: 100.00 at 23% plus
+    // 100.00 at 22% is 45.00 of VAT, and VatFor(200.00, 23) = 46.00 would turn a correct
+    // number into a wrong one. That is what the VAT assertion in the next test pins.
     // ---------------------------------------------------------------------------------------
     [Theory]
     // Stawka podstawowa: 22% and 23% both map to P_13_1/P_14_1.
@@ -97,7 +118,10 @@ public class OpenFindingsTests {
     }
 
     // The same defect stated as arithmetic, so a fix cannot satisfy the test above by dropping
-    // a band. Whatever Summarize reports has to reconcile with the net it was given.
+    // a band or by recomputing VAT from the merged net. Whatever Summarize reports has to
+    // reconcile with the net it was given, and the VAT has to stay what the individual rates
+    // actually produce. This test passes today; it is here to constrain the fix, not the
+    // defect, so it must keep passing rather than start passing.
     [Fact]
     public void SummarizeAccountsForEveryNetItWasGivenWhenRatesShareAFieldPair() {
         InvoiceTotals.Summary summary = InvoiceTotals.Summarize([
@@ -109,6 +133,11 @@ public class OpenFindingsTests {
         Assert.Empty(summary.UnsupportedRates);
         Assert.Equal(200.00m, summary.Bands.Sum(b => b.Net));
         Assert.Equal(200.00m, summary.TotalNet);
+
+        // 23.00 + 22.00. A merge that recomputes VAT from the merged net against one percent
+        // gives 46.00 or 44.00 — passing the field-pair test above by breaking the money.
+        Assert.Equal(45.00m, summary.Bands.Sum(b => b.Vat));
+        Assert.Equal(45.00m, summary.TotalVat);
     }
 
     // ---------------------------------------------------------------------------------------

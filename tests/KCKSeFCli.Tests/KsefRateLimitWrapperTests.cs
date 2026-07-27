@@ -19,6 +19,7 @@ using Xunit;
 
 namespace KCKSeFCli.Tests;
 
+[Collection(RateLimitTrackerCollection.Name)]
 public class KsefRateLimitWrapperTests {
     // High-limit endpoint (30/s, 120/min, 720/h) so the local throttle never sleeps during
     // these tests. The trackers are process-wide statics, so tests share this budget.
