@@ -603,6 +603,49 @@ clitest_l_lib_matches_pinned_sha256() {
     L_unittest_success verify_sha256 "${L_lib_path:-}" "${L_lib_sha256:-}"
 }
 
+# The verb list in Program.cs is hand-maintained and docs/ is linked by hand from README.md,
+# so nothing but this test keeps the three in step. All three had already drifted when it was
+# written: README linked docs/TokenRefresh.md, renamed to TestTokenRefresh.md eight commits
+# earlier, and TestTokenAuth was registered twice — which also made `help TestTokenAuth` die
+# with an unhandled InvalidOperationException, because CommandLine resolves a help verb with
+# SingleOrDefault.
+#
+# Verbs deliberately without a doc. `help` and `version` are supplied by CommandLine itself;
+# TestSkiaSharp describes itself as internal in its own HelpText.
+clitest_docs_match_verbs_undocumented=(help version TestSkiaSharp)
+# Docs that are not about a verb.
+clitest_docs_match_verbs_nonverb=(Configuration BezpieczenstwoAgentow UpstreamIssues)
+
+clitest_docs_match_verbs() {
+    local docsdir="$DIR/../docs" readme="$DIR/../README.md"
+    local verb doc dupes
+    local -a verbs
+
+    # Two leading spaces then the verb: option lines in --help are indented further, and
+    # wrapped description text never starts at that column.
+    mapfile -t verbs < <("${opt_exe[@]}" --help 2>&1 |
+        sed -n 's/^  \([A-Za-z][A-Za-z0-9]*\)  .*/\1/p' | sort)
+    L_unittest_success test "${#verbs[@]}" -gt 0
+
+    # A verb registered twice still parses, but breaks `help <verb>` and double-lists it.
+    dupes=$(printf '%s\n' "${verbs[@]}" | uniq -d)
+    L_unittest_eq "$dupes" ""
+
+    # Every verb has a doc, and README links it.
+    for verb in "${verbs[@]}"; do
+        L_array_contains clitest_docs_match_verbs_undocumented "$verb" && continue
+        L_unittest_success test -f "$docsdir/$verb.md"
+        L_unittest_success grep -qF "(docs/$verb.md)" "$readme"
+    done
+
+    # Every doc describes a verb that still exists, so a rename cannot leave a stale file.
+    for doc in "$docsdir"/*.md; do
+        doc=$(basename "$doc" .md)
+        L_array_contains clitest_docs_match_verbs_nonverb "$doc" && continue
+        L_unittest_success L_array_contains verbs "$doc"
+    done
+}
+
 # A correction on an invoice that uses more than one VAT band. RecalculateTotals handled rate
 # 23 only, so P_15 was recalculated from every line while P_13_3/P_14_3 kept its
 # pre-correction value and the correction did not add up.
