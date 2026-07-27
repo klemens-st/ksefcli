@@ -21,11 +21,11 @@ Needs network to `api.nuget.org` and `github.com`.
 dotnet build                                                   # WHOLE solution — see gotcha 1
 dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 224 tests
 dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
-./tests/unit.sh ./dist/kcksefcli                                # 60 CLI tests (publish first)
+./tests/unit.sh ./dist/kcksefcli                                # 61 CLI tests (publish first)
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
-The 60 come from three files: `unit.sh` (51) sources `cmdauth.sh` (3) and `test_parsedate.sh` (6).
+The 61 come from three files: `unit.sh` (52) sources `cmdauth.sh` (3) and `test_parsedate.sh` (6).
 Called with no binary path, `unit.sh` runs `make build` and tests the `cli` symlink (Debug) instead.
 
 **`tests/integration.sh` and `tests/ci.sh` cannot be run from an agent session.**
@@ -45,7 +45,10 @@ the upstream client submodule, `docs/` one Polish `.md` per verb linked from `RE
 
 **A new verb must be added to the `commandTypes` array in `Program.cs`.** It is hand-maintained,
 not a reflection scan, so a command class missing from it compiles and simply is not a verb.
-Add its `docs/<Verb>.md` in the same commit; nothing enforces that either.
+Add its `docs/<Verb>.md` and a README link in the same commit — `clitest_docs_match_verbs`
+now enforces all three, plus that no verb is registered twice. Exemptions are two arrays at
+the top of that test (`help`, `version`, `TestSkiaSharp`; `Configuration`,
+`BezpieczenstwoAgentow`, `UpstreamIssues`).
 
 ## Gotchas
 
@@ -78,6 +81,10 @@ Add its `docs/<Verb>.md` in the same commit; nothing enforces that either.
    against a SHA-256 pin before sourcing, so `sha256sum` is now required to run the CLI suite.
 8. **`-k` in `tests/unit.sh` takes one regex, not an alternation** — `-k 'a|b'` matches nothing
    and reports "No tests matched" rather than erroring.
+9. **A verb listed twice in `commandTypes` compiles, parses and runs** — but `help <verb>`
+   dies with an unhandled `InvalidOperationException` ("Sequence contains more than one
+   matching element"), because `CommandLine` resolves a help verb with `SingleOrDefault`.
+   The verb also appears twice in `--help`. `TestTokenAuth` was duplicated for 8 commits.
 
 ## Test conventions
 
@@ -104,6 +111,15 @@ Add its `docs/<Verb>.md` in the same commit; nothing enforces that either.
   leading `!` it still rejects invalid JSON.
 - **`-k` must come before the binary path.** `exe nargs=remainder` swallows everything after it,
   so `unit.sh ./dist/kcksefcli -k foo` passes `-k` to the CLI as a verb and every test fails.
+- `L_array_contains` takes an **array name, not an expansion**: `L_array_contains arr "$x"`,
+  never `"${arr[@]}"`. Test discovery is `L_unittest_main -p clitest_` with `compgen -A
+  function`, so a `clitest_*` **array** used as a test's data table is not itself collected.
+- Don't pipe inside `L_unittest_success cmd | grep -q` — the pipe binds to the assertion
+  helper, not the command, so the assertion silently tests the wrong thing.
+- To audit docs against the CLI, use `./dist/kcksefcli help <Verb>` — **never run the verb**.
+  Diff its options against the doc's backticked ones, filtering the ten globals, which the
+  docs deliberately delegate to `docs/Configuration.md`. `PobierzFaktury` likewise defers its
+  search options to `SzukajFaktur`, so both show up as false positives.
 - To test config-dependent behaviour offline, add a profile to `tests/test_kcksefcli.yaml`
   (e.g. `token_prod`). The confirmation gate runs before authentication, so a fake token never
   leaves the machine.
@@ -215,6 +231,7 @@ made it audible. `DodajPozycjeNaFakturze` now does this correctly for the three 
 `P_13_7`/`P_13_8`/`P_13_9` support plus the `Adnotacje` consequences (`P_18` for `oo`) to cover
 the rest. Bigger than it looks: the yaml input has no field for the transaction type that picks
 between `0 KR`/`0 WDT`/`0 EX`.
+`docs/NowaFaktura.md` now warns users off those rates until this is fixed.
 
 **Still open, deliberately untested** — a test would have to be written against a helper that
 does not exist yet, so write it alongside the fix:
@@ -222,7 +239,8 @@ does not exist yet, so write it alongside the fix:
 - `PobierzFaktury` filename collisions. `SafePath.SafeFileName` is many-to-one, so two invoices
   can land on one path and the second silently overwrites the first. `SafeFileName` is right to
   be many-to-one; the fix belongs at the call site, as a disambiguator applied when the target
-  already exists. The command itself needs the network and real invoices.
+  already exists. The command itself needs the network and real invoices. Documented as a
+  known limitation in `docs/PobierzFaktury.md`.
 - `Downloader`'s delete-then-move window. `File.Delete` then `File.Move` is not atomic, so a
   failure between them loses an already-verified cached generator. Reaching it needs a
   filesystem seam the code does not have, and the fix — `File.Move(temp, dest, overwrite: true)`
