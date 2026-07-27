@@ -125,6 +125,17 @@ public static class KsefRateLimitWrapper
 
     private static readonly ConcurrentDictionary<KsefApiEndpoint, EndpointRateTracker> Trackers = new();
 
+    /// <summary>
+    /// Odpowiedź /limits/rate w cache na czas życia procesu. Jedno zapytanie zwraca limity dla
+    /// wszystkich endpointów naraz, więc wystarczy raz — bez tego pobranie 1000 faktur kosztuje
+    /// 1000 dodatkowych zapytań, których lokalny licznik w ogóle nie widzi.
+    ///
+    /// Cache nie wygasa: proces CLI jest krótkotrwały i działa w jednym kontekście
+    /// uwierzytelnienia. Kluczem jest para (klient, token), a nie sam token, żeby dwa różne
+    /// klienty nie widziały nawzajem swoich odpowiedzi.
+    /// </summary>
+    private static readonly ConcurrentDictionary<(ILimitsClient Client, string Token), Task<EffectiveApiRateLimits?>> LimitsCache = new();
+
     private static async Task<ApiLimits> ResolveApiLimitsAsync(
         KsefApiEndpoint endpoint,
         ILimitsClient? limitsClient,
@@ -134,9 +145,15 @@ public static class KsefRateLimitWrapper
         // Próba pobrania limitów z API jeśli dostępny klient i token dostepu.
         if (limitsClient is not null && !string.IsNullOrWhiteSpace(accessToken))
         {
+            EffectiveApiRateLimits? serverLimits = await LimitsCache
+                .GetOrAdd(
+                    (limitsClient, accessToken!),
+                    key => FetchLimitsAsync(key.Client, key.Token, cancellationToken))
+                .ConfigureAwait(false);
 
-            EffectiveApiRateLimits serverLimits = await limitsClient.GetRateLimitsAsync(accessToken!, cancellationToken).ConfigureAwait(false);
-            EffectiveApiRateLimitValues? values = MapEndpointToValues(endpoint, serverLimits);
+            EffectiveApiRateLimitValues? values = serverLimits is null
+                ? null
+                : MapEndpointToValues(endpoint, serverLimits);
             if (values is not null)
             {
                 return new ApiLimits
@@ -150,6 +167,33 @@ public static class KsefRateLimitWrapper
 
         // Fallback do statycznych limitów testowych
         return KsefApiLimits.GetLimits(endpoint);
+    }
+
+    /// <summary>
+    /// Pobranie limitów, w którym awaria endpointu nie jest błędem krytycznym. Zapytanie o
+    /// limity leży poza pętlą ponowień, więc wyjątek stąd przerywałby całe pobieranie zanim
+    /// właściwe wywołanie w ogóle ruszy — i to z powodu endpointu, o który nikt nie prosił.
+    /// Statyczne limity są w pełni wystarczającym zapasowym rozwiązaniem.
+    /// </summary>
+    private static async Task<EffectiveApiRateLimits?> FetchLimitsAsync(
+        ILimitsClient limitsClient,
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await limitsClient.GetRateLimitsAsync(accessToken, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Przerwanie przez użytkownika to nie awaria endpointu limitów.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug($"Nie udało się pobrać limitów API ({ex.Message}); używam limitów statycznych.");
+            return null;
+        }
     }
 
     private static EffectiveApiRateLimitValues? MapEndpointToValues(KsefApiEndpoint endpoint, EffectiveApiRateLimits limits)
