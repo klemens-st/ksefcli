@@ -206,6 +206,63 @@ clitest_dodaj_pozycje_brak_pol_sumujacych() {
     L_unittest_cmd -I ! test -e out.xml
 }
 
+# 0% is a real VAT rate with a real net field, unlike zw/oo/np — and unlike them it is not
+# ambiguous. TStawkaPodatku has no bare "0"; it has "0 KR" (krajowa), "0 WDT" and "0 EX"
+# (xsd:1876-1890), and each maps to exactly one net field, P_13_6_1/_2/_3 (xsd:2591-2605).
+# There is no P_14_6_x pair because 0% of anything is zero — which is why BandForRate, whose
+# contract is "rates with a net/VAT pair", still returns null for these.
+#
+# The command used to refuse every 0% line on the grounds that it had nowhere to put the net.
+# That was wrong: an invoice already carrying P_13_6_1 could not be extended at all. Main
+# accepted the line but added its net to P_15 only, leaving the sale declared in no band field.
+# Neither behaviour produced a correct invoice.
+clitest_dodaj_pozycje_stawka_zerowa() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_stawka_zerowa.xml test_invoice.xml
+    L_unittest_cmd cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Dostawa krajowa" --miara "szt" --ilosc 1 --cena-netto 100.00 --stawka-vat "0 KR"
+
+    # P_12 carries the canonical enumeration value.
+    local p12
+    L_unittest_cmd -v p12 cli XMLExtract out.xml "/Faktura/Fa/FaWiersz[last()]/P_12"
+    L_unittest_vareq p12 "0 KR"
+
+    # The net lands in the domestic 0% field, and P_15 moves by the net alone.
+    local p13_6_1 p15
+    L_unittest_cmd -v p13_6_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_6_1"
+    L_unittest_cmd -v p15 cli XMLExtract out.xml "/Faktura/Fa/P_15"
+    L_unittest_vareq p13_6_1 "100.00"
+    L_unittest_vareq p15 "2151.00"
+
+    # A VAT field must not be invented for a rate that has none.
+    L_unittest_cmd -I ! grep -q "P_14_6_1" out.xml
+}
+
+# Bare "0" is not in TStawkaPodatku, so writing it to P_12 would produce invalid XML. The three
+# variants carry the transaction type, and they are the only accepted spelling.
+clitest_dodaj_pozycje_gole_zero_odrzucone() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_stawka_zerowa.xml test_invoice.xml
+    local output
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Zerowa" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat 0
+    L_unittest_cmd -I grep -q "nie jest obsługiwana" <<<"$output"
+    L_unittest_cmd -I ! test -e out.xml
+}
+
+# The zero-rate path has its own required-field list (net + P_15, no VAT field), so the refusal
+# when that field is absent is separate logic from clitest_dodaj_pozycje_brak_pol_sumujacych.
+clitest_dodaj_pozycje_stawka_zerowa_bez_pola() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_stawka_zerowa.xml test_invoice.xml
+    local output
+    # The fixture has P_13_6_1 but not P_13_6_2, so a WDT line has nowhere to go.
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "WDT" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat "0 WDT"
+    L_unittest_cmd -I grep -q "P_13_6_2" <<<"$output"
+    L_unittest_cmd -I ! test -e out.xml
+}
+
 # P_12 must carry the normalised rate, not what the operator typed.
 #
 # InvoiceTotals.BandForRate deliberately tolerates a trailing "%" and surrounding space, and

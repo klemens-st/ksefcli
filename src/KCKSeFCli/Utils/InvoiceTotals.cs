@@ -46,9 +46,45 @@ public static class InvoiceTotals {
         return Bands.TryGetValue(percent, out VatBand band) ? band : null;
     }
 
+    /// <summary>Pole netto stawki 0%. Pary VAT nie ma — podatek wynosi zero.</summary>
+    public readonly record struct ZeroRateBand(string Rate, string NetField);
+
+    /// <summary>
+    /// Stawka 0% ma własne pole netto, tylko bez pary P_14_x. Które to pole, rozstrzyga rodzaj
+    /// transakcji — i niesie go sama wartość stawki, bo <c>TStawkaPodatku</c> nie dopuszcza
+    /// gołego "0", a jedynie te trzy warianty (schemat_FA(3)_v1-0E.xsd:1876-1890). Mapowanie
+    /// jest więc jednoznaczne, nie zgadywane.
+    /// </summary>
+    private static readonly ZeroRateBand[] ZeroRateBands = [
+        // Sprzedaż krajowa, z wyłączeniem WDT i eksportu.
+        new ZeroRateBand("0 KR", "P_13_6_1"),
+        // Wewnątrzwspólnotowa dostawa towarów.
+        new ZeroRateBand("0 WDT", "P_13_6_2"),
+        // Eksport towarów.
+        new ZeroRateBand("0 EX", "P_13_6_3"),
+    ];
+
+    /// <summary>
+    /// Rozpoznaje stawkę 0% w jednym z wariantów <c>TStawkaPodatku</c>, tolerując wielkość
+    /// liter i nadmiarowe odstępy. Zwraca kanoniczną postać stawki razem z jej polem netto,
+    /// albo <c>null</c>. Gołe "0" celowo nie przechodzi: schemat go nie zna, więc trafiłoby do
+    /// P_12 jako wartość spoza listy.
+    /// </summary>
+    public static ZeroRateBand? ZeroRateBandFor(string? rate) {
+        string normalized = string.Join(
+            " ", (rate ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        foreach (ZeroRateBand band in ZeroRateBands) {
+            if (string.Equals(band.Rate, normalized, StringComparison.OrdinalIgnoreCase)) {
+                return band;
+            }
+        }
+        return null;
+    }
+
     /// <summary>Nazwy stawek, które obsługujemy — do komunikatu o błędzie.</summary>
     public static string SupportedRates =>
-        string.Join(", ", Bands.Keys.OrderByDescending(k => k).Select(k => k + "%"));
+        string.Join(", ", Bands.Keys.OrderByDescending(k => k).Select(k => k + "%"))
+        + ", " + string.Join(", ", ZeroRateBands.Select(b => b.Rate));
 
     /// <summary>
     /// Zaokrąglenie do pełnych groszy. Połówki w górę co do modułu, zgodnie z praktyką

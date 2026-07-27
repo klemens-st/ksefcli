@@ -128,8 +128,18 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
 - FA(3) has a **net/VAT field pair per rate band**: 22/23 → `P_13_1`/`P_14_1`, 7/8 → `_2`,
   5 → `_3`, 4 → `_4`. Handling only 22/23 was a real defect in two commands — other bands were
   silently dropped while `P_15` moved, so the invoice did not add up.
-- Rates with **no pair at all** (0%, zw, np, oo) record their net elsewhere. Refuse rather than
-  assume zero VAT.
+- **0% is a rate, not a special case — don't lump it with zw/oo/np.** It has a net field and no
+  VAT field, correctly, since 0% of anything is zero. `TStawkaPodatku` has no bare `0`: only
+  `0 KR` (krajowa), `0 WDT` and `0 EX` (xsd:1876-1890), and each maps to exactly one field —
+  `P_13_6_1`/`_2`/`_3` (xsd:2591-2605). The rate carries the transaction type, so the mapping is
+  a lookup, not a guess. `InvoiceTotals.ZeroRateBandFor` owns it. Bare `0` is refused because the
+  schema has no such value, not because 0% is unsupported.
+- `zw` → `P_13_7`, `np I`/`np II` → `P_13_8`/`P_13_9`, `oo` — each a single net field, but each
+  also carries `Adnotacje` consequences (`P_18` for `oo`). Still refused by
+  `DodajPozycjeNaFakturze`; that refusal is a real limitation, not a correctness position.
+- `BandForRate` returns null for **all** of the above. Its contract is "rates with a net/VAT
+  pair", so null means "no pair", not "invalid rate". Don't widen it — check
+  `ZeroRateBandFor` alongside it, the way `DodajPozycjeNaFakturze` does.
 - Round **once, before the value reaches any total**, away from zero (`Math.Round` defaults to
   banker's rounding). VAT is computed on the **band total**, not per line, or rounding error
   accumulates.
@@ -146,6 +156,17 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
 ## Known-open findings, and non-findings
 
 From the review of the hardening branch. Recorded so they are neither lost nor rediscovered.
+
+**`NowaFaktura` still under-declares 0%, zw, np and oo — needs a proper fix.** It groups by rate,
+maps through `BandForRate`, and for anything without a net/VAT pair adds the net to `totalGross`
+(so it reaches `P_15`) while emitting no `P_13_x` at all — it only logs a warning. The sale ends
+up declared in the gross total and in no band field, which is an invalid invoice that XSD
+validation will not catch. This is inherited from main, not introduced by the fork; the fork only
+made it audible. `DodajPozycjeNaFakturze` now does this correctly for the three 0% variants via
+`InvoiceTotals.ZeroRateBandFor` — `NowaFaktura` should route through the same helper, and needs
+`P_13_7`/`P_13_8`/`P_13_9` support plus the `Adnotacje` consequences (`P_18` for `oo`) to cover
+the rest. Bigger than it looks: the yaml input has no field for the transaction type that picks
+between `0 KR`/`0 WDT`/`0 EX`.
 
 **Still open, deliberately untested** — a test would have to be written against a helper that
 does not exist yet, so write it alongside the fix:

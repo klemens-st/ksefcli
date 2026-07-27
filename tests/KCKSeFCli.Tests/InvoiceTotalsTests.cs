@@ -61,6 +61,44 @@ public class InvoiceTotalsTests {
         Assert.Null(InvoiceTotals.BandForRate(rate));
     }
 
+    // 0% is not the same kind of thing as zw/oo/np, and not ambiguous either. It has a net field
+    // and no VAT field — correctly, since 0% of anything is zero — so BandForRate above is right
+    // to return null for it. Which net field applies is decided by the transaction type, and
+    // TStawkaPodatku carries that in the rate itself: there is no bare "0" in the enumeration,
+    // only "0 KR", "0 WDT" and "0 EX" (xsd:1876-1890). The mapping is therefore looked up, not
+    // guessed.
+    [Theory]
+    [InlineData("0 KR", "P_13_6_1")]
+    [InlineData("0 WDT", "P_13_6_2")]
+    [InlineData("0 EX", "P_13_6_3")]
+    // Spelling is the operator's, canonical form is the schema's — the same tolerance
+    // BandForRate extends to "23%".
+    [InlineData("0 kr", "P_13_6_1")]
+    [InlineData("  0   WDT ", "P_13_6_2")]
+    public void ZeroRateBandForMapsEachVariantToItsOwnNetField(string rate, string expectedField) {
+        Assert.Equal(expectedField, InvoiceTotals.ZeroRateBandFor(rate)!.Value.NetField);
+    }
+
+    [Fact]
+    public void ZeroRateBandForCanonicalisesTheRateForP12() {
+        // P_12 is a closed enumeration, so what reaches the XML cannot be what was typed.
+        Assert.Equal("0 KR", InvoiceTotals.ZeroRateBandFor("0 kr")!.Value.Rate);
+    }
+
+    [Theory]
+    // Not in TStawkaPodatku at all: it would reach P_12 as a value outside the enumeration.
+    [InlineData("0")]
+    [InlineData("0%")]
+    // These have their own fields (P_13_7, P_13_8, ...) and are deliberately not handled here.
+    [InlineData("zw")]
+    [InlineData("oo")]
+    [InlineData("np I")]
+    [InlineData(null)]
+    [InlineData("23")]
+    public void ZeroRateBandForRejectsAnythingThatIsNotAZeroRateVariant(string? rate) {
+        Assert.Null(InvoiceTotals.ZeroRateBandFor(rate));
+    }
+
     [Theory]
     [InlineData(" 23 ", "P_13_1")]
     [InlineData("23%", "P_13_1")]
