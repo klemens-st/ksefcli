@@ -294,5 +294,36 @@ remote, `upstream` = `https://gitlab.com/kamcuk/kcksefcli.git`, so `git fetch` k
   `VersionPrefix` first if `--version` is supposed to mean something.
 - Inherited GitLab release plumbing keys on the **default branch name**, not on tags:
   `.release_main_expire_never` fires on `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`, and the
-  download URLs in `README.md` hardcode `/main/` in the artifact paths. None of it runs on the
-  GitHub fork today — there is no `.github/workflows`.
+  download URLs in `README.md` hardcode `/main/` in the artifact paths. **None of the GitLab
+  release plumbing runs on the GitHub fork** — `.github/workflows` now holds a test workflow
+  only, so those README download URLs still point at GitLab artifacts that this fork does not
+  produce.
+
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` is triggers only — `push: [main]`, `pull_request`, plus the
+concurrency group. All the work is in `.github/workflows/test.yml`, which is `on:
+workflow_call` **and nothing else**, so the planned build-and-publish workflow can reuse the
+same gate. Keep it that way: a `concurrency:` key declared in a *called* workflow applies to
+its jobs regardless of caller, so putting one in `test.yml` would make a publish run and a CI
+run cancel each other's gate.
+
+- The gate runs `dotnet restore` → **whole-solution `dotnet build -c Release`** → `dotnet test`
+  → `publish -r linux-x64 -f net10.0` → `tests/unit.sh`. The solution build is the only step
+  that compiles `net6.0` (gotcha 1) and is the one thing `.gitlab-ci.yml` never did.
+- **`test.yml` declares no `secrets:` block on purpose.** That is what structurally prevents it
+  from ever growing into running `integration.sh`/`ci.sh`, which file real invoices.
+- The `unit-filter` input is the escape hatch for the two live-registry tests (gotcha 5) —
+  pass `' ! clitest_pobierz_info_o_nip && ! clitest_nowa_faktura_nip_lookup '`. They currently
+  run and block, by choice.
+- NuGet is cached with `actions/cache`, not `setup-dotnet`'s `cache: true`, which needs a
+  `packages.lock.json` that `.gitignore` blocks. `tests/L_lib.sh` is cached under a key that
+  *is* its pinned SHA-256, so bumping `L_lib_sha256` auto-misses the cache.
+- No apt step is needed: the csproj sets `<IncludeAssets>none</IncludeAssets>` on
+  `SkiaSharp.NativeAssets.Linux`, so the shipped asset is `...NoDependencies`, whose
+  `libSkiaSharp.so` links only libc/libm/libdl/libpthread. `setup-wolfie.sh`'s fontconfig
+  install is a wolfi-base concern only.
+- No `dotnet format --verify-no-changes`, for the same reason `.format_check` is a dot-prefixed
+  template on GitLab (gotcha 2 and 6): it would be red on an untouched tree.
+- The check-run name is `test / build-and-test` (`<caller job id> / <called job name>`).
+  Renaming either job silently orphans any required status check configured on `main`.

@@ -1,0 +1,170 @@
+---
+# Trigger-free on purpose: ci.yml calls this for push/PR, and the build-and-publish workflow
+# will call it before shipping. Do NOT add triggers or a `concurrency:` key here -- a
+# concurrency group declared in a called workflow applies to its jobs whoever called it, so
+# two callers would cancel each other's gate runs.
+name: test
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        default: ubuntu-latest
+      dotnet-version:
+        # Explicit because nothing else pins the SDK (there is no global.json) and
+        # TreatWarningsAsErrors=true turns a runner-image SDK bump into a red build with no
+        # commit behind it.
+        type: string
+        default: '10.0.x'
+      unit-filter:
+        # -r expression for tests/unit.sh; the escape hatch for the two live-registry tests
+        # (CLAUDE.md gotcha 5):
+        #   ' ! clitest_pobierz_info_o_nip && ! clitest_nowa_faktura_nip_lookup '
+        # !, &&, ||, ( and ) are operators and every other token is a regex. Alternation
+        # inside one token silently matches nothing (gotcha 8), so the operators are the only
+        # way to combine names.
+        type: string
+        default: ''
+      upload-binary:
+        # Lets a release ship the exact bytes tests/unit.sh ran against.
+        type: boolean
+        default: false
+      artifact-name:
+        type: string
+        default: kcksefcli-linux-x64
+      retention-days:
+        type: number
+        default: 7
+    outputs:
+      artifact-name:
+        value: ${{ inputs.artifact-name }}
+      artifact-id:
+        # Empty unless upload-binary was true.
+        value: ${{ jobs.build-and-test.outputs.artifact-id }}
+    # No `secrets:` block, deliberately: tests/integration.sh and tests/ci.sh file real
+    # invoices with a human's credentials. With no way to receive a credential, this workflow
+    # has no way to grow into running them.
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  build-and-test:
+    runs-on: ${{ inputs.runs-on }}
+    # Measured 2m20s cold, 2m00s warm. 30 is slack for a hang, not a target.
+    timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.upload-binary.outputs.artifact-id }}
+
+    steps:
+      # A fresh checkout has an empty submodule and nothing builds -- kcksefcli.slnx
+      # references five projects inside it. That submodule is public HTTPS, hence no
+      # credential needs persisting.
+      - name: Checkout, including the ksef-client-csharp submodule
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up the .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      # Hand-rolled because setup-dotnet's own `cache: true` needs a packages.lock.json and
+      # .gitignore blocks *.lock.json. hashFiles runs post-checkout, so the submodule's csproj
+      # files are in the key.
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.slnx') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      # The key IS the SHA-256 that tests/lib.sh verifies L_lib.sh against before sourcing it,
+      # so bumping L_lib_sha256 auto-misses the cache and a poisoned entry is rejected and
+      # re-downloaded. No restore-keys, for the same reason.
+      #
+      # Do NOT set L_LIB_VERSION to skip the download: pull_L_lib then returns early without
+      # sourcing anything and clitest_l_lib_matches_pinned_sha256 fails.
+      - name: Cache the pinned L_lib.sh test harness
+        uses: actions/cache@v6
+        with:
+          path: tests/L_lib.sh
+          key: l-lib-af6771471c0dcd9068dd0f9f148780bd8069cb4b101958e063c29309e1fedd23
+
+      # ~100 NU1903 warnings here are expected: the submodule declares a vulnerable
+      # System.Security.Cryptography.Xml that src/ and tests/ override with a direct 10.0.10
+      # pin. Do not try to silence them with -warnaserror or NUGET_AUDIT_MODE.
+      - name: Restore
+        run: dotnet restore kcksefcli.slnx
+
+      # The net6.0 gate. Publish is -f net10.0 only, so a .NET 7+/8+ API breaks net6.0
+      # silently -- twice already, once for 8 commits. Only a whole-solution build catches it
+      # (CLAUDE.md gotcha 1), and the GitLab pipeline never ran one.
+      - name: Build the whole solution (net6.0 + net10.0)
+        run: dotnet build kcksefcli.slnx -c Release --no-restore
+
+      # No --no-build on purpose: it would trade a near-free incremental rebuild for a
+      # dependency on the solution build having put the test assembly where the test host
+      # looks.
+      - name: Unit and regression tests (xUnit)
+        run: >
+          dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj
+          -c Release --no-restore
+          --logger 'trx;LogFileName=test-results.trx'
+          --results-directory artifacts/test-results
+
+      # No --no-restore on purpose: a RID-specific publish can need assets the plain solution
+      # restore did not fetch.
+      - name: Publish linux-x64
+        run: >
+          dotnet publish src/KCKSeFCli/KCKSeFCli.csproj
+          -c Release -r linux-x64 -f net10.0 -o dist
+
+      - name: Smoke the published binary
+        run: |
+          ./dist/kcksefcli --version
+          ./dist/kcksefcli --help > /dev/null
+
+      # The filter goes through the environment rather than into the run: line, which would be
+      # a shell-injection seam. Options must precede the binary path -- `exe` is
+      # nargs=remainder, so a trailing -r reaches the CLI as a verb and every test fails.
+      - name: Black-box CLI tests
+        env:
+          UNIT_FILTER: ${{ inputs.unit-filter }}
+        run: |
+          if [[ -n "$UNIT_FILTER" ]]; then
+            ./tests/unit.sh -r "$UNIT_FILTER" ./dist/kcksefcli
+          else
+            ./tests/unit.sh ./dist/kcksefcli
+          fi
+
+      # Run-scoped name so a CI gate and a publish gate within one run cannot collide.
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/test-results
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload the tested linux-x64 binary
+        id: upload-binary
+        if: ${{ inputs.upload-binary }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/kcksefcli
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
