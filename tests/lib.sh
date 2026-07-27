@@ -164,3 +164,34 @@ testlib_setup_integration_config() {
 	return 0
 }
 
+# testlib_profile_nip <profile> — echoes the NIP the CLI itself resolves for that profile:
+# an explicit `nip:` from the config, or the one extracted from the token or the certificate.
+# PrintConfig sends its log lines to stderr and never redacts the NIP, so stdout is parseable.
+testlib_profile_nip() {
+	local nip
+	nip=$("${opt_exe[@]}" PrintConfig -a "$1" --json 2>/dev/null |
+		sed -n 's/.*"Nip":[[:space:]]*"\([0-9]*\)".*/\1/p')
+	if [[ ! "$nip" =~ ^[0-9]{10}$ ]]; then
+		L_fatal "Could not resolve a 10-digit NIP for profile '$1' via PrintConfig, got '$nip'"
+	fi
+	printf '%s\n' "$nip"
+}
+
+# testlib_make_invoice <profile> <template.xml> <output.xml>
+#
+# Integration tests file real invoices in the name of whoever's credentials are configured, so
+# the seller NIP cannot be a fixture constant: KSeF rejects an invoice whose Podmiot1 is not
+# the authenticated context with 410 "Nieprawidłowy zakres uprawnień". Both substitutions are
+# needed for the invoice to be accepted — P_2 because a repeated invoice number is refused as a
+# duplicate, Podmiot1/NIP because of that permission check. The template keeps its own NIP so
+# that the offline unit tests and tests/expected_korekta.xml stay byte-stable.
+testlib_make_invoice() {
+	local profile=$1 template=$2 output=$3 nip
+	nip=$(testlib_profile_nip "$profile")
+	# The seller substitution is confined to Podmiot1; Podmiot2 is the buyer, which is not
+	# subject to the permission check and is left as the template has it.
+	sed -e "s|<P_2>.*<|<P_2>$(date +%s.%N)<|" \
+		-e "/<Podmiot1>/,/<\/Podmiot1>/ s|<NIP>[0-9]*</NIP>|<NIP>$nip</NIP>|" \
+		"$template" >"$output"
+}
+

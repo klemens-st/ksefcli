@@ -25,8 +25,8 @@ clitest_z_integration_PobierzFaktury() {
 
 clitest_z_integration_PrzeslijFaktury() {
 	L_with_cd_tmpdir
-	sed "s/<P_2>.*</<P_2>$(date +%s.%N)</" "$DIR"/FA_3_Przykład_1.xml > faktura1.xml
-	sed "s/<P_2>.*</<P_2>$(date +%s.%N)</" "$DIR"/FA_3_Przykład_1.xml > faktura2.xml
+	testlib_make_invoice mytoken "$DIR"/FA_3_Przykład_1.xml faktura1.xml
+	testlib_make_invoice mytoken "$DIR"/FA_3_Przykład_1.xml faktura2.xml
 	L_unittest_cmd \
 		cli PrzeslijFaktury -a mytoken --upodir . --upopdf faktura1.xml faktura2.xml
 	rm faktura1.xml faktura2.xml
@@ -45,7 +45,12 @@ clitest_z_integration_PobierzFaktury_prod() {
 
 clitest_z_integration_WystawFaktureOffline() {
 	L_with_cd_tmpdir
-	sed "s/<P_2>.*</<P_2>$(date +%s.%N)</" "$DIR"/FA_3_Przykład_1.xml > faktura_testowa.xml
+	# Issued by mytoken's NIP, signed with the offline profile's certificate. The seller NIP
+	# goes into the KOD II link as both the context and the subject identifier, and whoever
+	# scans that link verifies it against the signing certificate — so the two profiles have to
+	# describe the same entity. Only the certificate is taken from `offline`, which means the
+	# profile needs no `nip:` of its own for this test to run.
+	testlib_make_invoice mytoken "$DIR"/FA_3_Przykład_1.xml faktura_testowa.xml
 	L_unittest_cmd cli WystawFaktureOffline -a offline ./faktura_testowa.xml ./faktura_testowa.pdf
 	L_unittest_cmd ls -la ./faktura_testowa.pdf
 }
