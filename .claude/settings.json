@@ -1,5 +1,30 @@
 {
   "enabledPlugins": {
     "csharp-lsp@claude-plugins-official": false
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git config core.hooksPath >/dev/null 2>&1 || git config core.hooksPath .githooks",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "i=$(cat); case $i in *git*commit*) printf '%s' \"$i\" | \"$CLAUDE_PROJECT_DIR/.claude/hooks/commit-msg-guard.py\";; esac",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
