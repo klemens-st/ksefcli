@@ -27,7 +27,10 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
     [Option("cena-netto", Required = true, HelpText = "Unit net price (P_9A).")]
     public required decimal CenaNetto { get; set; }
 
-    [Option("stawka-vat", Required = true, HelpText = "VAT rate (P_12), e.g., 23, 8, 5, 0.")]
+    // Wymieniamy dokładnie te stawki, które polecenie przyjmuje. Stawka zerowa nie ma pary
+    // P_13_x/P_14_x, więc kończy się odmową — reklamowanie jej w pomocy wysyłało operatora
+    // wprost na ten błąd.
+    [Option("stawka-vat", Required = true, HelpText = "Stawka VAT (P_12): 23, 22, 8, 7, 5 albo 4. Stawki bez pary pól sumujących (zw, np, oo, zerowa) trzeba uzupełnić ręcznie.")]
     public required string StawkaVat { get; set; }
 
     [Option("bez-walidacji", Required = false, HelpText = "Skip XML validation after adding the item.")]
