@@ -266,7 +266,11 @@ public class NowaFakturaCommand : IGlobalCommand {
 
         foreach (KeyValuePair<string, (string VatField, decimal Net, decimal Vat)> pair
                  in byField.OrderBy(p => p.Key, StringComparer.Ordinal)) {
-            if (pair.Value.Net <= 0) {
+            // Tylko pasmo puste po obu stronach można pominąć — nie wnosi nic do żadnej sumy.
+            // Warunek <= 0 gubił pasmo, które rabat sprowadził poniżej zera, podczas gdy
+            // totalGross liczyło je dalej: faktura zostawała bez P_13_x/P_14_x, a P_15 i tak
+            // się o nie zmieniało, więc składniki nie sumowały się do podanej kwoty.
+            if (pair.Value.Net == 0m && pair.Value.Vat == 0m) {
                 continue;
             }
             faElements.Add(new XElement(pair.Key, InvoiceTotals.Format(pair.Value.Net)));
