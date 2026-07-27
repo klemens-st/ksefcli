@@ -17,6 +17,17 @@ public static class KsefRateLimitWrapper
     private const int DefaultMaxRetryAttempts = 5;
 
     /// <summary>
+    /// Komunikat dla operatora, jeśli --retry-attempts jest poza zakresem; <c>null</c>, gdy
+    /// wartość jest poprawna. Ta sama granica co w <see cref="ExecuteWithRetryAsync{T}"/>, tylko
+    /// zgłoszona zanim polecenie cokolwiek zrobi — wyjątek z wnętrza wrappera trafiłby do
+    /// operatora dopiero po uwierzytelnieniu i jako nieobsłużony błąd.
+    /// </summary>
+    public static string? ValidateRetryAttempts(int value) =>
+        value < 1
+            ? $"Błąd: --retry-attempts musi być liczbą większą od zera (podano {value})."
+            : null;
+
+    /// <summary>
     /// Wykonuje wywołanie KSeF API z automatyczną obsługą rate limiting.
     /// Automatycznie ponawiaj próby po HTTP 429 zgodnie z Retry-After header.
     /// </summary>
@@ -36,6 +47,19 @@ public static class KsefRateLimitWrapper
         string? accessToken = null,
         CancellationToken cancellationToken = default)
     {
+        // Pętla poniżej biegnie od 1 do maxRetryAttempts włącznie, więc przy wartości < 1 jej
+        // ciało nigdy się nie wykona i sterowanie spadnie na końcowy InvalidOperationException.
+        // To zwykły błąd argumentu, a nie awaria — zgłaszamy go jako błąd argumentu.
+        // ArgumentOutOfRangeException.ThrowIfNegativeOrZero jest dostępne dopiero od .NET 8,
+        // a projekt buduje się także dla net6.0.
+        if (maxRetryAttempts < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRetryAttempts),
+                maxRetryAttempts,
+                "Liczba prób musi być większa od zera.");
+        }
+
         // Odczyt profilu limitów danego endpointu (RPS/RPM/RPH)
         ApiLimits limits = await ResolveApiLimitsAsync(endpoint, limitsClient, accessToken, cancellationToken).ConfigureAwait(false);
 
@@ -101,6 +125,17 @@ public static class KsefRateLimitWrapper
 
     private static readonly ConcurrentDictionary<KsefApiEndpoint, EndpointRateTracker> Trackers = new();
 
+    /// <summary>
+    /// Odpowiedź /limits/rate w cache na czas życia procesu. Jedno zapytanie zwraca limity dla
+    /// wszystkich endpointów naraz, więc wystarczy raz — bez tego pobranie 1000 faktur kosztuje
+    /// 1000 dodatkowych zapytań, których lokalny licznik w ogóle nie widzi.
+    ///
+    /// Cache nie wygasa: proces CLI jest krótkotrwały i działa w jednym kontekście
+    /// uwierzytelnienia. Kluczem jest para (klient, token), a nie sam token, żeby dwa różne
+    /// klienty nie widziały nawzajem swoich odpowiedzi.
+    /// </summary>
+    private static readonly ConcurrentDictionary<(ILimitsClient Client, string Token), Task<EffectiveApiRateLimits?>> LimitsCache = new();
+
     private static async Task<ApiLimits> ResolveApiLimitsAsync(
         KsefApiEndpoint endpoint,
         ILimitsClient? limitsClient,
@@ -110,9 +145,15 @@ public static class KsefRateLimitWrapper
         // Próba pobrania limitów z API jeśli dostępny klient i token dostepu.
         if (limitsClient is not null && !string.IsNullOrWhiteSpace(accessToken))
         {
+            EffectiveApiRateLimits? serverLimits = await LimitsCache
+                .GetOrAdd(
+                    (limitsClient, accessToken!),
+                    key => FetchLimitsAsync(key.Client, key.Token, cancellationToken))
+                .ConfigureAwait(false);
 
-            EffectiveApiRateLimits serverLimits = await limitsClient.GetRateLimitsAsync(accessToken!, cancellationToken).ConfigureAwait(false);
-            EffectiveApiRateLimitValues? values = MapEndpointToValues(endpoint, serverLimits);
+            EffectiveApiRateLimitValues? values = serverLimits is null
+                ? null
+                : MapEndpointToValues(endpoint, serverLimits);
             if (values is not null)
             {
                 return new ApiLimits
@@ -126,6 +167,33 @@ public static class KsefRateLimitWrapper
 
         // Fallback do statycznych limitów testowych
         return KsefApiLimits.GetLimits(endpoint);
+    }
+
+    /// <summary>
+    /// Pobranie limitów, w którym awaria endpointu nie jest błędem krytycznym. Zapytanie o
+    /// limity leży poza pętlą ponowień, więc wyjątek stąd przerywałby całe pobieranie zanim
+    /// właściwe wywołanie w ogóle ruszy — i to z powodu endpointu, o który nikt nie prosił.
+    /// Statyczne limity są w pełni wystarczającym zapasowym rozwiązaniem.
+    /// </summary>
+    private static async Task<EffectiveApiRateLimits?> FetchLimitsAsync(
+        ILimitsClient limitsClient,
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await limitsClient.GetRateLimitsAsync(accessToken, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Przerwanie przez użytkownika to nie awaria endpointu limitów.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug($"Nie udało się pobrać limitów API ({ex.Message}); używam limitów statycznych.");
+            return null;
+        }
     }
 
     private static EffectiveApiRateLimitValues? MapEndpointToValues(KsefApiEndpoint endpoint, EffectiveApiRateLimits limits)

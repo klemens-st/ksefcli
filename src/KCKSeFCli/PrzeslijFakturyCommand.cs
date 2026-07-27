@@ -38,6 +38,10 @@ public class PrzeslijFakturyCommand : IWithConfigCommand {
     [Option("retry-attempts", Default = 5, HelpText = "Liczba ponownych prób po przekroczeniu limitu zapytań (HTTP 429).")]
     public int RetryAttempts { get; set; }
 
+    // Sprawdzane zanim zadziała bramka DangerousOperation i zanim polecenie się uwierzytelni.
+    public override string? ValidateOptions() =>
+        KsefRateLimitWrapper.ValidateRetryAttempts(RetryAttempts);
+
     [Option("no-local-rate-limit", HelpText = "Wyłącz lokalne ograniczanie liczby zapytań do API.")]
     public bool NoLocalRateLimit { get; set; }
 

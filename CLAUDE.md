@@ -19,9 +19,9 @@ Needs network to `api.nuget.org` and `github.com`.
 
 ```bash
 dotnet build                                                   # WHOLE solution — see gotcha 1
-dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 205 tests
+dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 224 tests
 dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
-./tests/unit.sh ./dist/kcksefcli                                # 51 CLI tests (publish first)
+./tests/unit.sh ./dist/kcksefcli                                # 60 CLI tests (publish first)
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
@@ -30,7 +30,8 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 1. **Always `dotnet build` the whole solution before committing.** Project multi-targets
    `net6.0;net10.0`. Building `-f net10.0` only hid a `net6.0` break for 8 commits
    (`SHA256.HashData(Stream)` is .NET 7+; .NET 6 has only the `byte[]` overload). Publish is
-   `-f net10.0`; build is not.
+   `-f net10.0`; build is not. Recurred with `ArgumentOutOfRangeException.ThrowIfNegativeOrZero`
+   (.NET 8+) — check any convenience overload's availability before using it.
 2. **`make test` rewrites ~30 files** — it runs `dotnet format` without `--verify-no-changes`.
    Use `dotnet test` directly. The drift is pre-existing, mostly in verbatim copies of upstream
    client helpers (`Utils/AsyncPollingUtils.cs`, `BatchSessionUtils.cs`, `KsefRateLimitWrapper.cs`);
@@ -64,14 +65,21 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 - Each security fix has a regression test whose file header explains what it defends against.
 - `L_unittest_cmd` calls `hash` on argv[0], so it **cannot run a shell function** — it registers
   a failed assertion instead. Use `L_unittest_success` / `L_unittest_failure` for those.
-- `L_unittest_cmd -v` captures stdout only; add `-j` to also capture stderr. Combining a leading
-  `!` with `-e N` cancels out — `!` already inverts the status before the comparison.
+- `L_unittest_cmd -v` captures stdout only **for a plain command**; add `-j` to also capture
+  stderr. A **leading `!` changes this**: `-v output ! cmd` captures both streams even without
+  `-j`. Verified by probe, and it matters — the two production-gate tests grep a stderr-only
+  message out of a `-v` capture and do work. Combining a leading `!` with `-e N` cancels out —
+  `!` already inverts the status before the comparison.
+- **`-k` must come before the binary path.** `exe nargs=remainder` swallows everything after it,
+  so `unit.sh ./dist/kcksefcli -k foo` passes `-k` to the CLI as a verb and every test fails.
 - To test config-dependent behaviour offline, add a profile to `tests/test_kcksefcli.yaml`
   (e.g. `token_prod`). The confirmation gate runs before authentication, so a fake token never
   leaves the machine.
 - When a test claims to pin a bug fix, **run it against the pre-fix binary** and confirm it
   fails there. Two of this repo's fixes had first-draft tests that passed either way.
-  `git stash push <file> && dotnet publish … -o dist_old && ./tests/unit.sh ./dist_old/kcksefcli`
+  **Commit first, then** `git checkout <pre-fix-sha> -- src/ && dotnet publish … -o dist_old &&
+  git checkout HEAD -- src/`. That silently discards uncommitted `src/` changes. Avoid
+  `git stash`: the stack is shared with every other worktree and concurrent session.
 
 ## Security invariants — do not undo
 
@@ -104,6 +112,14 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
   rate-limited API).
 - Platform-gated APIs need `[UnsupportedOSPlatformGuard("windows")]` on the guard property, or
   CA1416 fails the build; a plain `bool` property is not enough for the analyzer.
+- `Log.Flush()` runs in a `finally` **nested inside** `Program.Main`'s `try`, so it precedes the
+  `catch` handlers — those use unbuffered `Console.Error`, so flushing after them prints a stack
+  trace ahead of the log lines leading to it. `ConfigureLogging` disposes the previous factory
+  (commands configure twice). Without both, the CLI intermittently exits printing **nothing**;
+  the rate scales with machine load (~6% idle, 67% loaded).
+- `InvoiceTotals.Summarize` keys bands by **field pair, not percent**, and sums VAT computed per
+  rate. Keying by percent aimed two totals at one element; deriving VAT from the merged net
+  turns 45.00 into 46.00.
 
 ## Money math
 
@@ -112,8 +128,18 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
 - FA(3) has a **net/VAT field pair per rate band**: 22/23 → `P_13_1`/`P_14_1`, 7/8 → `_2`,
   5 → `_3`, 4 → `_4`. Handling only 22/23 was a real defect in two commands — other bands were
   silently dropped while `P_15` moved, so the invoice did not add up.
-- Rates with **no pair at all** (0%, zw, np, oo) record their net elsewhere. Refuse rather than
-  assume zero VAT.
+- **0% is a rate, not a special case — don't lump it with zw/oo/np.** It has a net field and no
+  VAT field, correctly, since 0% of anything is zero. `TStawkaPodatku` has no bare `0`: only
+  `0 KR` (krajowa), `0 WDT` and `0 EX` (xsd:1876-1890), and each maps to exactly one field —
+  `P_13_6_1`/`_2`/`_3` (xsd:2591-2605). The rate carries the transaction type, so the mapping is
+  a lookup, not a guess. `InvoiceTotals.ZeroRateBandFor` owns it. Bare `0` is refused because the
+  schema has no such value, not because 0% is unsupported.
+- `zw` → `P_13_7`, `np I`/`np II` → `P_13_8`/`P_13_9`, `oo` — each a single net field, but each
+  also carries `Adnotacje` consequences (`P_18` for `oo`). Still refused by
+  `DodajPozycjeNaFakturze`; that refusal is a real limitation, not a correctness position.
+- `BandForRate` returns null for **all** of the above. Its contract is "rates with a net/VAT
+  pair", so null means "no pair", not "invalid rate". Don't widen it — check
+  `ZeroRateBandFor` alongside it, the way `DodajPozycjeNaFakturze` does.
 - Round **once, before the value reaches any total**, away from zero (`Math.Round` defaults to
   banker's rounding). VAT is computed on the **band total**, not per line, or rounding error
   accumulates.
@@ -123,6 +149,49 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
   band holds the **difference** while untouched lines keep their full value. Pre-existing
   semantic, encoded in `tests/expected_korekta.xml`. Don't "fix" it without deciding what a KOR
   invoice should state.
+- `NowaFakturaCommand` keeps its own inline band merge on purpose: it derives VAT as
+  `brutto - net` so net + VAT equals the gross exactly. Routing it through `VatFor` changes the
+  numbers. It is not dead duplication of `Summarize`.
+
+## Known-open findings, and non-findings
+
+From the review of the hardening branch. Recorded so they are neither lost nor rediscovered.
+
+**`NowaFaktura` still under-declares 0%, zw, np and oo — needs a proper fix.** It groups by rate,
+maps through `BandForRate`, and for anything without a net/VAT pair adds the net to `totalGross`
+(so it reaches `P_15`) while emitting no `P_13_x` at all — it only logs a warning. The sale ends
+up declared in the gross total and in no band field, which is an invalid invoice that XSD
+validation will not catch. This is inherited from main, not introduced by the fork; the fork only
+made it audible. `DodajPozycjeNaFakturze` now does this correctly for the three 0% variants via
+`InvoiceTotals.ZeroRateBandFor` — `NowaFaktura` should route through the same helper, and needs
+`P_13_7`/`P_13_8`/`P_13_9` support plus the `Adnotacje` consequences (`P_18` for `oo`) to cover
+the rest. Bigger than it looks: the yaml input has no field for the transaction type that picks
+between `0 KR`/`0 WDT`/`0 EX`.
+
+**Still open, deliberately untested** — a test would have to be written against a helper that
+does not exist yet, so write it alongside the fix:
+
+- `PobierzFaktury` filename collisions. `SafePath.SafeFileName` is many-to-one, so two invoices
+  can land on one path and the second silently overwrites the first. `SafeFileName` is right to
+  be many-to-one; the fix belongs at the call site, as a disambiguator applied when the target
+  already exists. The command itself needs the network and real invoices.
+- `Downloader`'s delete-then-move window. `File.Delete` then `File.Move` is not atomic, so a
+  failure between them loses an already-verified cached generator. Reaching it needs a
+  filesystem seam the code does not have, and the fix — `File.Move(temp, dest, overwrite: true)`
+  — removes the window rather than handling it, leaving nothing to assert on.
+
+**Retracted on investigation — do not "rediscover" these:**
+
+- That `InvoiceTotals.Bands` is missing an entry for rate 3, "the historical second reduced rate
+  pairing with `P_13_3`". There is no 3% VAT rate in Polish tax law. `TStawkaPodatku` does list
+  3 among the values `P_12` accepts, but no `P_13_x` pair is documented against it anywhere. The
+  pairing was invented; the absence of 3 from `Bands` is correct. Rates with no pair are refused
+  by design.
+- That `clitest_prod_upload_allowed_with_yes` and `clitest_test_env_upload_not_gated` are
+  vacuous because they grep a stderr-only refusal out of a stdout-only capture. The stream claim
+  is right, the conclusion is wrong: `L_unittest_cmd` merges both streams when the command is
+  prefixed with `!`, which both tests do. Sabotaging `DangerousOperation.Evaluate` to refuse
+  unconditionally makes both fail, with or without `-j`.
 
 ## Conventions
 
@@ -133,4 +202,7 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
   don't copy a neighbour, write Polish.
 - Exit codes: `0` ok, `1` failure, `2` partial success (`PrzeslijFaktury` — some invoices filed,
   so a blind retry duplicates them), `3` unhandled exception.
+- Option range checks go in `IGlobalCommand.ValidateOptions()`, which `Program.cs` calls between
+  `ConfigureLogging` and `ExecuteAsync` — ahead of the config file, DI and authentication, so a
+  bad value fails offline. `CommandLineParser` cannot bound a numeric option itself.
 - Commits stay small and separable so upstreaming to the GitLab original remains cheap.

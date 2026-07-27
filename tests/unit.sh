@@ -206,6 +206,175 @@ clitest_dodaj_pozycje_brak_pol_sumujacych() {
     L_unittest_cmd -I ! test -e out.xml
 }
 
+# 0% is a real VAT rate with a real net field, unlike zw/oo/np — and unlike them it is not
+# ambiguous. TStawkaPodatku has no bare "0"; it has "0 KR" (krajowa), "0 WDT" and "0 EX"
+# (xsd:1876-1890), and each maps to exactly one net field, P_13_6_1/_2/_3 (xsd:2591-2605).
+# There is no P_14_6_x pair because 0% of anything is zero — which is why BandForRate, whose
+# contract is "rates with a net/VAT pair", still returns null for these.
+#
+# The command used to refuse every 0% line on the grounds that it had nowhere to put the net.
+# That was wrong: an invoice already carrying P_13_6_1 could not be extended at all. Main
+# accepted the line but added its net to P_15 only, leaving the sale declared in no band field.
+# Neither behaviour produced a correct invoice.
+clitest_dodaj_pozycje_stawka_zerowa() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_stawka_zerowa.xml test_invoice.xml
+    L_unittest_cmd cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Dostawa krajowa" --miara "szt" --ilosc 1 --cena-netto 100.00 --stawka-vat "0 KR"
+
+    # P_12 carries the canonical enumeration value.
+    local p12
+    L_unittest_cmd -v p12 cli XMLExtract out.xml "/Faktura/Fa/FaWiersz[last()]/P_12"
+    L_unittest_vareq p12 "0 KR"
+
+    # The net lands in the domestic 0% field, and P_15 moves by the net alone.
+    local p13_6_1 p15
+    L_unittest_cmd -v p13_6_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_6_1"
+    L_unittest_cmd -v p15 cli XMLExtract out.xml "/Faktura/Fa/P_15"
+    L_unittest_vareq p13_6_1 "100.00"
+    L_unittest_vareq p15 "2151.00"
+
+    # A VAT field must not be invented for a rate that has none.
+    L_unittest_cmd -I ! grep -q "P_14_6_1" out.xml
+}
+
+# Bare "0" is not in TStawkaPodatku, so writing it to P_12 would produce invalid XML. The three
+# variants carry the transaction type, and they are the only accepted spelling.
+clitest_dodaj_pozycje_gole_zero_odrzucone() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_stawka_zerowa.xml test_invoice.xml
+    local output
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Zerowa" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat 0
+    L_unittest_cmd -I grep -q "nie jest obsługiwana" <<<"$output"
+    L_unittest_cmd -I ! test -e out.xml
+}
+
+# The zero-rate path has its own required-field list (net + P_15, no VAT field), so the refusal
+# when that field is absent is separate logic from clitest_dodaj_pozycje_brak_pol_sumujacych.
+clitest_dodaj_pozycje_stawka_zerowa_bez_pola() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_stawka_zerowa.xml test_invoice.xml
+    local output
+    # The fixture has P_13_6_1 but not P_13_6_2, so a WDT line has nowhere to go.
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "WDT" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat "0 WDT"
+    L_unittest_cmd -I grep -q "P_13_6_2" <<<"$output"
+    L_unittest_cmd -I ! test -e out.xml
+}
+
+# P_12 must carry the normalised rate, not what the operator typed.
+#
+# InvoiceTotals.BandForRate deliberately tolerates a trailing "%" and surrounding space, and
+# InvoiceTotalsTests pins that. DodajPozycjeNaFakturze used it for the band lookup but then
+# wrote P_12 from the raw --stawka-vat, so "23%" totalled correctly into P_13_1/P_14_1/P_15 and
+# was emitted verbatim into an element whose type (TStawkaPodatku) is a closed enumeration.
+clitest_dodaj_pozycje_stawka_z_procentem() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    L_unittest_cmd cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "Pozycja 23%" --miara "szt" --ilosc 1 --cena-netto 100.00 --stawka-vat '23%'
+
+    # P_12 must carry the enumeration value, not whatever the operator typed.
+    local p12
+    L_unittest_cmd -v p12 cli XMLExtract out.xml "/Faktura/Fa/FaWiersz[last()]/P_12"
+    L_unittest_vareq p12 "23"
+
+    # And the totals must still be the ones the normalised rate implies.
+    local p13_1 p14_1
+    L_unittest_cmd -v p13_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_1"
+    L_unittest_cmd -v p14_1 cli XMLExtract out.xml "/Faktura/Fa/P_14_1"
+    L_unittest_vareq p13_1 "1766.66"
+    L_unittest_vareq p14_1 "406.33"
+}
+
+# The CLI must never exit having printed nothing at all.
+#
+# Log.ConfigureLogging builds an ILoggerFactory with AddConsole, whose provider queues messages
+# onto a background writer thread. The factory was stored in a static and never disposed, and
+# Program.Main returns its exit code straight to the runtime, so whatever was still queued when
+# the process exited was discarded. The failure is all-or-nothing: the run reports exit 1 and
+# prints nothing at all about why.
+#
+# That matters most for exactly the use this fork is hardened for. An agent that gets a bare
+# exit 1 with no message has nothing to act on, and the natural response — retry — is the wrong
+# one for a command that files invoices.
+#
+# Measured at ~6% of runs on an idle machine (6/100 and 5/100 sequentially, 5.5% independently
+# on another machine). The rate is NOT fixed: what is lost is a starved writer thread's queue,
+# so it climbs with load — on a busy machine it reached 67% (80/120), and once 120/120. Read a
+# high count here as the box being loaded, not as the test having changed meaning.
+#
+# The iterations run concurrently: 120 at -P8 costs ~7s, where 40 sequential runs cost ~12s.
+# The extra iterations are the point, not the speed. The per-run miss rate is indistinguishable
+# between the two modes (400 runs each way came back 30 and 30), so the count is what buys the
+# margin: across the 5.5-7.5% idle range, N=40 leaves a false-pass rate somewhere around
+# 1-in-10 to 1-in-20, while N=120 puts it between 1-in-900 and 1-in-11,000 — and load only
+# pushes that further down. Against the fixed binary: 0 misses in 600 invocations, half of them
+# at four times oversubscription, plus 10 clean runs of this test. So it is probabilistic in
+# one direction only — it is not expected to go red on a correct tree.
+#
+# It was also the true cause of the intermittent failures seen in this suite, which landed on
+# whichever Log-dependent test happened to lose the race. It is NOT xUnit test parallelism: the
+# bash suite is a separate process and shares no state with the xUnit run.
+clitest_log_nie_gubi_komunikatow() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    local puste
+    # 8% has no P_13_2/P_14_2 pair in this fixture, so every run is refused before anything is
+    # written — the refusal goes through Log.Error, so every run must print it. Each worker
+    # still gets its own output path so the concurrency cannot be what makes them agree.
+    # cli() is a shell function and cannot cross into xargs, hence "$opt_exe" directly.
+    puste=$(seq 1 120 | xargs -P 8 -I{} sh -c '
+        out=$("$1" DodajPozycjeNaFakturze test_invoice.xml "out.{}.xml" --nazwa Pozycja \
+            --miara szt --ilosc 1 --cena-netto 10.00 --stawka-vat 8 2>&1 || true)
+        case "$out" in *P_13_2*) ;; *) echo MISS ;; esac' _ "$opt_exe" | grep -c MISS || true)
+    L_unittest_vareq puste "0"
+}
+
+# DodajPozycjeNaFakturze used to write the output file and validate it afterwards, so every
+# validation failure left invalid XML on disk and still reported failure. WystawKorekte does it
+# the other way — validate, return 1, then write — and that is the order the repo is consistent
+# about, because the output of a failed run is what an agent picks up and files next.
+#
+# P_7 is TZnakowy512, so an over-long name fails validation without needing the network and
+# without depending on the separate P_12 finding.
+clitest_dodaj_pozycje_nie_zapisuje_niepoprawnego_xml() {
+    L_with_cd_tmpdir
+    cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
+    local dluga_nazwa
+    dluga_nazwa=$(printf 'x%.0s' {1..600})
+
+    L_unittest_cmd -j -v output -e 1 cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
+        --nazwa "$dluga_nazwa" --miara "szt" --ilosc 1 --cena-netto 100.00 --stawka-vat 23
+
+    # The run failed, so it must not have left a file behind for the next step to pick up.
+    L_unittest_success test ! -e out.xml
+}
+
+# --help must not offer a rate the command refuses.
+#
+# A bare "0" is not in TStawkaPodatku at all, so the command refuses it and the help must not
+# promise it. The three real zero rates — "0 KR", "0 WDT", "0 EX" — ARE accepted, and the help
+# should name them, so they are stripped before the check rather than being caught by it.
+#
+# That exclusion is the whole subtlety here. The pattern below matches a "0" delimited by
+# spaces, which is exactly the shape of "0 KR", so without stripping them first this test would
+# reject a correct help string. Strip by the full token, not by a lone "0", or "0 KRX" would
+# slip through.
+clitest_dodaj_pozycje_help_nie_obiecuje_stawki_zero() {
+    local output
+    L_unittest_cmd -v output cli DodajPozycjeNaFakturze --help
+    local stawka_line
+    stawka_line=$(grep -- "--stawka-vat" <<<"$output" || true)
+    [[ -n "$stawka_line" ]] || fatal "No --stawka-vat line in the help output"
+    local bez_stawek_zerowych
+    bez_stawek_zerowych=$(sed -E 's/\b0 (KR|WDT|EX)\b//g' <<<"$stawka_line")
+    # The trailing %? matters: rewriting the HelpText as "np. 23, 8, 5, 0%." would otherwise
+    # slip past this test while still advertising a rate the command refuses.
+    L_unittest_cmd -I ! grep -qE '(^|[ ,])0%?([ ,.]|$)' <<<"$bez_stawek_zerowych"
+}
+
 clitest_nowa_faktura() {
     L_with_cd_tmpdir
     L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice.yaml invoice.xml
@@ -235,6 +404,39 @@ clitest_nowa_faktura_stawka_ryczalt() {
     L_unittest_vareq p14_4 "4.00"
     # P_15 must equal the sum of the bands it reports.
     L_unittest_vareq p15 "1334.00"
+}
+
+# A band a rabat drives negative must still be emitted.
+#
+# GenerateXml skipped P_13_x/P_14_x for any merged band whose net was <= 0, but totalGross is
+# accumulated from every position unconditionally. A rabat that drives one band negative
+# therefore vanished from the summary while still moving P_15. In this fixture the 23% band
+# nets to -500.00 + -115.00 VAT and was dropped, leaving components that sum to 105.00 against
+# a stated P_15 of -510.00. XSD validation passes either way — it does not check the totals.
+#
+# A band that is zero on both sides is harmless (it contributes nothing either way), so the
+# guard tests for that rather than for a sign.
+clitest_nowa_faktura_rabat_ujemne_pasmo() {
+    L_with_cd_tmpdir
+    L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice_rabat.yaml out.xml
+
+    local p13_1 p14_1 p13_3 p14_3 p15
+    # 615.00 - 1230.00 = -615.00 gross at 23%, i.e. -500.00 net and -115.00 VAT.
+    L_unittest_cmd -v p13_1 cli XMLExtract out.xml "/Faktura/Fa/P_13_1"
+    L_unittest_cmd -v p14_1 cli XMLExtract out.xml "/Faktura/Fa/P_14_1"
+    L_unittest_vareq p13_1 "-500.00"
+    L_unittest_vareq p14_1 "-115.00"
+
+    # The untouched band stays as it was.
+    L_unittest_cmd -v p13_3 cli XMLExtract out.xml "/Faktura/Fa/P_13_3"
+    L_unittest_cmd -v p14_3 cli XMLExtract out.xml "/Faktura/Fa/P_14_3"
+    L_unittest_vareq p13_3 "100.00"
+    L_unittest_vareq p14_3 "5.00"
+
+    # The whole point: P_15 must equal the sum of the bands the invoice actually reports.
+    # -500.00 + -115.00 + 100.00 + 5.00 = -510.00.
+    L_unittest_cmd -v p15 cli XMLExtract out.xml "/Faktura/Fa/P_15"
+    L_unittest_vareq p15 "-510.00"
 }
 
 clitest_nowa_faktura_nip_lookup() {
@@ -323,7 +525,14 @@ clitest_prod_upload_allowed_with_yes() {
     local output
     # --yes gets past the gate. The command then fails at authentication with a fake token,
     # which is the proof that the gate is no longer what stopped it.
-    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output \
+    #
+    # -j is belt and braces, not a fix: the refusal goes to stderr, and a bare -v captures
+    # stdout only — but only for a plain command. With a leading "!", as here, L_unittest_cmd
+    # merges both streams, so this assertion was already looking at the refusal. Verified by
+    # sabotaging DangerousOperation.Evaluate to refuse unconditionally: this test fails against
+    # that binary with or without -j. Stating -j explicitly means the coverage no longer
+    # depends on the "!" being present.
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output \
         ! cli PrzeslijFaktury --yes -a token_prod "$DIR/FA_3_Przykład_1.xml" </dev/null || true
     L_unittest_cmd -I ! grep -q "Odmowa" <<<"$output"
 }
@@ -331,9 +540,31 @@ clitest_prod_upload_allowed_with_yes() {
 clitest_test_env_upload_not_gated() {
     local output
     # Non-production must not be gated at all, otherwise agents cannot work unattended.
-    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -v output \
+    # -j for the same reason as above: explicit rather than relying on the "!" merging streams.
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output \
         ! cli PrzeslijFaktury -a token_test "$DIR/FA_3_Przykład_1.xml" </dev/null || true
     L_unittest_cmd -I ! grep -q "Odmowa" <<<"$output"
+}
+
+# --retry-attempts must be bounded, and rejected before anything happens.
+#
+# --retry-attempts had no lower bound on either PrzeslijFaktury or SzukajFaktur (PobierzFaktury
+# inherits the latter). ExecuteWithRetryAsync loops `for (attempt = 1; attempt <=
+# maxRetryAttempts; ...)`, so at 0 the body never ran and it fell through to
+# `throw new InvalidOperationException("Nieoczekiwane zakończenie pętli powtórzeń dla ...")`,
+# which Program.cs reports as exit 3 with a stack trace and no mention of the flag at fault.
+#
+# The value is now rejected by IGlobalCommand.ValidateOptions, ahead of the config file, the DI
+# container and authentication. That is what keeps this test offline: it has to fail before any
+# authentication happens, so a run that starts reaching the network is itself a regression.
+clitest_retry_attempts_zero_odrzucone() {
+    local output
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \
+        cli PrzeslijFaktury -a token_test --retry-attempts 0 "$DIR/FA_3_Przykład_1.xml" </dev/null
+    # The operator has to be told which option they got wrong.
+    L_unittest_cmd -I grep -q "retry-attempts" <<<"$output"
+    # A bad argument is an ordinary failure, not an unhandled exception.
+    L_unittest_cmd -I ! grep -q "at KCKSeFCli" <<<"$output"
 }
 
 clitest_prod_revoke_refused_without_terminal() {

@@ -1,0 +1,31 @@
+# A rabat large enough to drive the 23% band negative, with a second band left positive.
+#
+# NowaFaktura skips emitting P_13_x/P_14_x for any band whose merged net is <= 0, but P_15 is
+# accumulated from every position unconditionally. The 23% band here nets to -615.00 gross
+# (-500.00 + -115.00 VAT) and disappears from the output entirely, so the invoice's own
+# components sum to 105.00 against a stated total of -510.00 — and XSD validation still passes,
+# because it does not check that the totals agree.
+Sprzedawca:
+  Nip: "5260250274"
+  Nazwa: "Firma Sprzedawca"
+  Adres: "ul. Prosta 1, 00-001 Warszawa"
+Kupujący:
+  Nazwa: "Klient Kupujący"
+  Adres: "ul. Krzywa 2, 00-002 Kraków"
+DataWykonania: "2026-02-15"
+Pozycje:
+  - Nazwa: "Usługa IT"
+    Jednostka: "godz"
+    Ilosc: 1
+    StawkaPodatku: "23%"
+    WartoscBrutto: 615.00
+  - Nazwa: "Rabat"
+    Jednostka: "szt"
+    Ilosc: 1
+    StawkaPodatku: "23%"
+    WartoscBrutto: -1230.00
+  - Nazwa: "Usługa 5%"
+    Jednostka: "szt"
+    Ilosc: 1
+    StawkaPodatku: "5%"
+    WartoscBrutto: 105.00

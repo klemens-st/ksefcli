@@ -28,7 +28,9 @@ public static class InvoiceTotals {
         [7] = new VatBand(7, "P_13_2", "P_14_2"),
         // Stawka obniżona druga.
         [5] = new VatBand(5, "P_13_3", "P_14_3"),
-        // Ryczałt dla rolnika ryczałtowego.
+        // Stawka obniżona trzecia — ryczałt dla taksówek osobowych (schemat_FA(3)_v1-0E.xsd:2558).
+        // Nie mylić ze zryczałtowanym zwrotem podatku dla rolnika ryczałtowego: ten należy do
+        // faktury VAT RR i nie trafia do żadnego z pól P_13_x.
         [4] = new VatBand(4, "P_13_4", "P_14_4"),
     };
 
@@ -44,9 +46,45 @@ public static class InvoiceTotals {
         return Bands.TryGetValue(percent, out VatBand band) ? band : null;
     }
 
+    /// <summary>Pole netto stawki 0%. Pary VAT nie ma — podatek wynosi zero.</summary>
+    public readonly record struct ZeroRateBand(string Rate, string NetField);
+
+    /// <summary>
+    /// Stawka 0% ma własne pole netto, tylko bez pary P_14_x. Które to pole, rozstrzyga rodzaj
+    /// transakcji — i niesie go sama wartość stawki, bo <c>TStawkaPodatku</c> nie dopuszcza
+    /// gołego "0", a jedynie te trzy warianty (schemat_FA(3)_v1-0E.xsd:1876-1890). Mapowanie
+    /// jest więc jednoznaczne, nie zgadywane.
+    /// </summary>
+    private static readonly ZeroRateBand[] ZeroRateBands = [
+        // Sprzedaż krajowa, z wyłączeniem WDT i eksportu.
+        new ZeroRateBand("0 KR", "P_13_6_1"),
+        // Wewnątrzwspólnotowa dostawa towarów.
+        new ZeroRateBand("0 WDT", "P_13_6_2"),
+        // Eksport towarów.
+        new ZeroRateBand("0 EX", "P_13_6_3"),
+    ];
+
+    /// <summary>
+    /// Rozpoznaje stawkę 0% w jednym z wariantów <c>TStawkaPodatku</c>, tolerując wielkość
+    /// liter i nadmiarowe odstępy. Zwraca kanoniczną postać stawki razem z jej polem netto,
+    /// albo <c>null</c>. Gołe "0" celowo nie przechodzi: schemat go nie zna, więc trafiłoby do
+    /// P_12 jako wartość spoza listy.
+    /// </summary>
+    public static ZeroRateBand? ZeroRateBandFor(string? rate) {
+        string normalized = string.Join(
+            " ", (rate ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        foreach (ZeroRateBand band in ZeroRateBands) {
+            if (string.Equals(band.Rate, normalized, StringComparison.OrdinalIgnoreCase)) {
+                return band;
+            }
+        }
+        return null;
+    }
+
     /// <summary>Nazwy stawek, które obsługujemy — do komunikatu o błędzie.</summary>
     public static string SupportedRates =>
-        string.Join(", ", Bands.Keys.OrderByDescending(k => k).Select(k => k + "%"));
+        string.Join(", ", Bands.Keys.OrderByDescending(k => k).Select(k => k + "%"))
+        + ", " + string.Join(", ", ZeroRateBands.Select(b => b.Rate));
 
     /// <summary>
     /// Zaokrąglenie do pełnych groszy. Połówki w górę co do modułu, zgodnie z praktyką
@@ -93,9 +131,16 @@ public static class InvoiceTotals {
     /// Grupuje pozycje po paśmie stawek i liczy VAT raz od sumy netto pasma, a nie osobno dla
     /// każdej pozycji. Zaokrąglanie każdej pozycji z osobna kumuluje błąd: trzy pozycje po
     /// 0,33 zł przy 23% dają 0,24 zł zamiast poprawnych 0,23 zł.
+    ///
+    /// Wynik jest kluczowany parą pól, a nie stawką. Kilka stawek dzieli jedną parę (23% i 22%
+    /// trafiają do P_13_1/P_14_1, 8% i 7% do P_13_2/P_14_2), więc grupowanie po stawce zwracało
+    /// dwie sumy wskazujące na ten sam element: wywołujący wpisywał obie pod ten sam adres i
+    /// wygrywała druga, mimo że P_15 liczyło obie pozycje. Prawo nie dopuszcza obu stawek pary
+    /// na jednej fakturze, ale WystawKorekte czyta cudzy XML i musi policzyć poprawnie to, co
+    /// dostanie, zamiast po cichu rozjeżdżać sumy.
     /// </summary>
     public static Summary Summarize(IEnumerable<(string? Rate, decimal Net)> lines) {
-        Dictionary<int, (VatBand Band, decimal Net)> byBand = new();
+        Dictionary<int, (VatBand Band, decimal Net)> byRate = new();
         List<string> unsupported = new();
         decimal unsupportedNet = 0m;
 
@@ -110,18 +155,37 @@ public static class InvoiceTotals {
                 continue;
             }
             int key = band.Value.Percent;
-            decimal running = byBand.TryGetValue(key, out (VatBand Band, decimal Net) existing)
+            decimal running = byRate.TryGetValue(key, out (VatBand Band, decimal Net) existing)
                 ? existing.Net
                 : 0m;
-            byBand[key] = (band.Value, running + net);
+            byRate[key] = (band.Value, running + net);
         }
 
-        List<BandTotal> bands = byBand.Values
-            .OrderByDescending(entry => entry.Band.Percent)
-            .Select(entry => new BandTotal(
-                entry.Band,
-                RoundMoney(entry.Net),
-                VatFor(RoundMoney(entry.Net), entry.Band.Percent)))
+        // Dwa etapy, i kolejność ma znaczenie dla kwot. Najpierw VAT od sumy netto danej
+        // *stawki* — to jest właśnie liczenie od sumy pasma, którego broni komentarz wyżej.
+        // Dopiero potem sumowanie stawek dzielących parę pól, osobno netto i osobno VAT.
+        //
+        // VAT-u nie wolno przeliczyć z połączonego netto po jednej stawce: 100,00 zł przy 23%
+        // i 100,00 zł przy 22% to 45,00 zł podatku, a VatFor(200,00, 23) dałoby 46,00 zł —
+        // poprawną kwotę zamieniłoby to na błędną.
+        Dictionary<string, BandTotal> byField = new();
+
+        foreach ((VatBand Band, decimal Net) entry in byRate.Values.OrderByDescending(e => e.Band.Percent)) {
+            decimal net = RoundMoney(entry.Net);
+            decimal vat = VatFor(net, entry.Band.Percent);
+
+            if (byField.TryGetValue(entry.Band.NetField, out BandTotal running)) {
+                // Pasmo reprezentuje stawka wyższa, bo pętla idzie malejąco i pierwsza trafia
+                // do słownika: dla pary 23/22 zostaje 23. Percent służy już tylko komunikatom.
+                byField[entry.Band.NetField] =
+                    running with { Net = running.Net + net, Vat = running.Vat + vat };
+            } else {
+                byField[entry.Band.NetField] = new BandTotal(entry.Band, net, vat);
+            }
+        }
+
+        List<BandTotal> bands = byField.Values
+            .OrderByDescending(band => band.Band.Percent)
             .ToList();
 
         return new Summary(
