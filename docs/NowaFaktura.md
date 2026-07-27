@@ -50,3 +50,26 @@ Pozycje:
     StawkaPodatku: "23" # Opcjonalnie, domyślnie "23" (użyj "odwrotne obciążenie" lub "oo" dla oo)
     WartoscBrutto: 1230.00
 ```
+
+---
+
+## Ograniczenie: obsługiwane są tylko stawki z parą pól `P_13_x`/`P_14_x`
+
+> **Nie używaj tego polecenia do faktur ze stawką `0%`, `zw`, `np` ani `oo`.**
+
+Poprawnie obsługiwane są wyłącznie stawki mające parę pól netto/VAT: `23`, `22`, `8`, `7`, `5`
+i `4`. Dla pozostałych polecenie dolicza wartość pozycji do sumy `P_15`, ale **nie wypisuje
+żadnego pola `P_13_x`**. Sprzedaż jest wtedy wykazana w sumie ogólnej i w żadnym polu
+szczegółowym, co daje fakturę, która się nie sumuje.
+
+Polecenie ostrzega o tym na wyjściu, ale **walidacja XSD tego nie wykryje** — schemat nie
+sprawdza, czy sumy się zgadzają. Przejście `WeryfikujXML` nie jest więc dowodem, że kwoty są
+poprawne.
+
+Dotyczy to również wartości `oo` i `odwrotne obciążenie` wymienionych w przykładzie wyżej:
+poza brakiem pola `P_13_x` odwrotne obciążenie wymaga także adnotacji `P_18` w sekcji
+`Adnotacje`, której polecenie nie uzupełnia.
+
+Do dodania pozycji ze stawką zerową (`0 KR`, `0 WDT`, `0 EX`) do istniejącej faktury służy
+[`DodajPozycjeNaFakturze`](DodajPozycjeNaFakturze.md), które obsługuje je poprawnie. Pozycje
+`zw`, `np` i `oo` trzeba na razie uzupełnić ręcznie.

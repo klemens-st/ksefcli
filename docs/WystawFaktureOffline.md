@@ -20,7 +20,7 @@ kcksefcli WystawFaktureOffline faktura.xml faktura.pdf
 | Argument      | Opis                                   | Wymagane |
 |---------------|----------------------------------------|----------|
 | `InputFile`   | Ścieżka do pliku XML z fakturą.        | Tak      |
-| `OutputFile`  | Ścieżka wyjściowa dla pliku PDF.       | Nie      |
+| `OutputFile`  | Ścieżka wyjściowa dla pliku PDF. Jeśli nie zostanie podana, plik powstanie obok pliku wejściowego, z rozszerzeniem zmienionym na `.pdf`. | Nie      |
 
 **Opcje:**
 

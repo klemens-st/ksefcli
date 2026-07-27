@@ -18,7 +18,7 @@ kcksefcli XML2PDF <plik-xml> [<plik-wyjsciowy-pdf>]
 | Argument               | Opis                                                      | Wymagane |
 |------------------------|-----------------------------------------------------------|----------|
 | `plik-xml`             | Ścieżka do istniejącego pliku wejściowego XML faktury.    | Tak      |
-| `plik-wyjsciowy-pdf`   | Opcjonalna ścieżka dla docelowego pliku `.pdf`.           | Nie      |
+| `plik-wyjsciowy-pdf`   | Opcjonalna ścieżka dla docelowego pliku `.pdf`. Jeśli nie zostanie podana, plik powstanie obok pliku wejściowego, z rozszerzeniem zmienionym na `.pdf`. | Nie      |
 
 **Opcje:**
 

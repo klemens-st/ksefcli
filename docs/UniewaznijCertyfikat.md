@@ -20,6 +20,17 @@ kcksefcli UniewaznijCertyfikat <numer-seryjny>
 | Opcja      | Opis                                                                                                          | Domyślnie |
 |------------|---------------------------------------------------------------------------------------------------------------|-----------|
 | `--reason` | Powód unieważnienia: `KeyCompromise`, `AffiliationChanged`, `Superseded`, `CessationOfOperation`, `Other`.    | `Other`   |
+| `--yes`    | Potwierdza nieodwracalną operację w środowisku produkcyjnym bez pytania.                                       |           |
+
+---
+
+## Unieważnienie na produkcji wymaga potwierdzenia
+
+Unieważnienia certyfikatu nie da się cofnąć, dlatego w środowisku produkcyjnym polecenie
+najpierw prosi o potwierdzenie. Bez terminala — w skrypcie, w CI i w sesji agenta — **brak
+`--yes` oznacza odmowę** i zakończenie z kodem `1`. Środowisko o nierozpoznanej nazwie jest
+traktowane jak produkcyjne. Pełny opis zasad:
+[**Bezpieczeństwo w pracy z agentami**](BezpieczenstwoAgentow.md).
 
 ---
 

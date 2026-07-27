@@ -36,7 +36,7 @@
   - [`SprawdzLimitCertyfikatow`](docs/SprawdzLimitCertyfikatow.md)
   - [`SzukajFaktur`](docs/SzukajFaktur.md)
   - [`TestTokenAuth`](docs/TestTokenAuth.md)
-  - [`TokenRefresh`](docs/TokenRefresh.md)
+  - [`TestTokenRefresh`](docs/TestTokenRefresh.md)
   - [`UniewaznijCertyfikat`](docs/UniewaznijCertyfikat.md)
   - [`WeryfikujXML`](docs/WeryfikujXML.md)
   - [`WylistujCertyfikaty`](docs/WylistujCertyfikaty.md)

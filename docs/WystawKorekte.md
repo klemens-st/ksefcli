@@ -32,3 +32,15 @@ Koryguje ilość dla pozycji o numerze 1 na 5 sztuk w pliku `faktura.xml` i zapi
 ```bash
 kcksefcli WystawKorekte faktura.xml korekta.xml 1 5 --PrzyczynaKorekty "Błędna ilość"
 ```
+
+---
+
+## Jak korekta przedstawia zmienioną pozycję
+
+Skorygowana pozycja nie jest w wynikowym pliku podmieniana w miejscu. Zamiast tego trafiają tam
+**dwa wiersze**: kopia pierwotnej pozycji z odwróconym znakiem (wartości ujemne) oraz pozycja
+z nową, poprawną wartością. Dzięki temu suma dla tej stawki VAT wyraża samą **różnicę**
+względem faktury pierwotnej, a pozycje nietknięte korektą zachowują pełne wartości.
+
+Wynik jednej korekty ma więc więcej wierszy niż faktura wejściowa. Jest to celowa semantyka
+tego polecenia, utrwalona w teście porównującym bajty (`tests/expected_korekta.xml`).

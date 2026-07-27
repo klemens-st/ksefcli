@@ -34,6 +34,23 @@ Dzięki temu numer taki jak `0004/26` zapisuje się jako `0004_26.xml` zamiast k
 błędem, a plik nigdy nie powstaje poza katalogiem wskazanym opcją `--outputdir`. Jeżeli nazwa
 wymagała zmiany, pojawia się ostrzeżenie z nazwą pierwotną i wynikową.
 
+> **Znane ograniczenie: kolizje nazw.** Oczyszczanie jest wieloznaczne — różne numery mogą dać
+> tę samą nazwę pliku (np. `0004/26` i `0004-26` zamieniają się w `0004_26`). Polecenie nie
+> sprawdza, czy plik już istnieje, więc druga faktura **nadpisze** pierwszą bez ostrzeżenia.
+> Przy pobieraniu do jednego katalogu porównaj liczbę zapisanych plików z liczbą znalezionych
+> faktur; przy `--useInvoiceNumber` ryzyko jest większe, bo numery nadawane przez wystawców
+> częściej zawierają znaki wymagające zamiany.
+
+## Zakres dat a świeżo wystawione faktury
+
+Domyślne `--dateType Issue` filtruje po dacie wystawienia zapisanej w samej fakturze (`P_1`),
+a nie po dacie przyjęcia jej przez KSeF. Fakturę przesłaną przed chwilą znajdziesz przez
+`--dateType Invoicing`. Szczegóły: [`SzukajFaktur`](SzukajFaktur.md).
+
+Polecenie pobiera **wszystkie** pasujące faktury, przechodząc przez kolejne strony wyników —
+`--pageSize` nie ogranicza ich liczby. Szerokie kryteria oznaczają więc nieograniczoną liczbę
+plików zapisanych na dysk.
+
 
 ## Konfiguracja i Uwierzytelnianie
 

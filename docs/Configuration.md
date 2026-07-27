@@ -34,7 +34,7 @@ profiles:
 
 ### Opcje Konfiguracyjne
 
-*   `active_profile`: (Opcjonalnie) Nazwa profilu, który będzie używany domyślnie, jeśli nie zostanie podany za pomocą opcji `--profile`. Jeśli zdefiniowany jest tylko jeden profil, `active_profile` jest ignorowane.
+*   `active_profile`: (Opcjonalnie) Nazwa profilu, który będzie używany domyślnie, jeśli nie zostanie podany za pomocą opcji `-a`/`--active`. Gdy nie wskazano profilu ani opcją, ani tym kluczem, a plik definiuje dokładnie jeden profil — zostanie użyty ten jedyny. Ustawione `active_profile` jest natomiast zawsze honorowane: nazwa, która nie odpowiada żadnemu profilowi, kończy się błędem, nawet jeśli profil jest tylko jeden.
 *   `profiles`: Mapa profili konfiguracyjnych.
     *   `<nazwa_profilu>`: Dowolna nazwa identyfikująca profil (np. `dyzio`, `firma_xyz_test`).
         *   `environment`: Środowisko KSeF (`test`, `demo`, `prod`).
@@ -136,6 +136,8 @@ Możesz sterować konfiguracją używając opcji `--config`/`--active` LUB defin
 | `--no-tokencache` | | Całkowicie wyłącza odczyt i zapis tokenów z/do pamięci podręcznej na czas trwania bieżącego wywołania komendy. | `false` | Brak |
 | `--environment` | | Ustawia wybrane środowisko KSeF dla wywołania ad-hoc (np. `test`, `demo`). | | `--config`, `--active` |
 | `--token` | | Używa wskazanego tokena autoryzacyjnego (numer NIP wyciągany jest z tokenu). Tworzy profil ad-hoc. | | `--config`, `--active` |
+| `-v`, `--verbose` | | Włącza szczegółowe logowanie. | `false` | Brak |
+| `-q`, `--quiet` | | Ogranicza logowanie do ostrzeżeń i błędów. | `false` | Brak |
 
 ### Współdziałanie z opcjami konfiguracyjnymi
 
