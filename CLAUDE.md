@@ -1,8 +1,8 @@
 # kcksefcli — working notes
 
 C# CLI for the Polish KSeF e-invoicing API, wrapping the official `CIRFMF/ksef-client-csharp`
-client (git submodule). GPLv3. This fork is hardened for agentic use; see
-`claude/ksef-cli-evaluation-d8qhpu`.
+client (git submodule). GPLv3. This fork is hardened for agentic use, and `main` **is** that
+hardened line — not a mirror of the original. See [Branches](#branches).
 
 ## Setup
 
@@ -272,3 +272,27 @@ does not exist yet, so write it alongside the fix:
   `ConfigureLogging` and `ExecuteAsync` — ahead of the config file, DI and authentication, so a
   bad value fails offline. `CommandLineParser` cannot bound a numeric option itself.
 - Commits stay small and separable so upstreaming to the GitLab original remains cheap.
+
+## Branches
+
+`main` is **this fork's** release line and the branch releases get tagged on. It is not a mirror
+of the original — it carries all the hardening. The unmodified original is tracked only as a
+remote, `upstream` = `https://gitlab.com/kamcuk/kcksefcli.git`, so `git fetch` keeps
+`upstream/main` an exact copy with no branch to maintain by hand.
+
+- **Ingest upstream by merge, not rebase**: `git fetch upstream && git merge upstream/main`.
+  Rebasing `main` after a release leaves that release's tag pointing off-branch.
+- `upstream`'s push URL is set to `DISABLED_read_only_mirror` so a stray `git push upstream`
+  fails instead of writing to someone else's project. Upstream contributions go as a GitLab MR
+  from a topic branch cut off `upstream/main` and cherry-picked onto — which is what the
+  small-separable-commits convention above is for.
+- Neither this fork nor upstream has any tags yet, so the version namespace is unclaimed. Pick a
+  scheme that cannot be mistaken for upstream's and record the upstream base commit in the
+  release notes.
+- **`<Version>` is not set anywhere** in `KCKSeFCli.csproj` — the `*` on `SkiaSharp.NativeAssets.Linux`
+  is a package wildcard, not the assembly version. A tag alone will not reach the binary; wire a
+  `VersionPrefix` first if `--version` is supposed to mean something.
+- Inherited GitLab release plumbing keys on the **default branch name**, not on tags:
+  `.release_main_expire_never` fires on `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`, and the
+  download URLs in `README.md` hardcode `/main/` in the artifact paths. None of it runs on the
+  GitHub fork today — there is no `.github/workflows`.
