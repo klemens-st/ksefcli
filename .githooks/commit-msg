@@ -8,8 +8,8 @@
 # versioned, so a fresh clone has no hook until someone runs it. .claude/hooks/commit-msg-guard.py
 # calls this same script from a Claude Code PreToolUse hook; the rules live here only.
 #
-# Pure bash on purpose: no jq, no python. It has to run on a bare dev machine and inside the
-# wolfi-base container that tests/setup-wolfie.sh provisions.
+# Pure bash on purpose: no jq, no python. It has to run on a bare dev machine and inside a
+# minimal CI image alike.
 set -euo pipefail
 
 readonly TYPES='feat|fix|docs|test|refactor|ci|chore|revert|perf|build|style'

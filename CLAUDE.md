@@ -75,9 +75,8 @@ the top of that test (`help`, `version`, `TestSkiaSharp`; `Configuration`,
    registered details breaks the test without anything being wrong here. Check the API response
    before hunting for a bug in our code.
 6. `tests/L_lib.sh` is downloaded at test time and gitignored. Don't commit it. It is verified
-   against a SHA-256 pin before sourcing, so `sha256sum` is now required to run the CLI suite.
-   In a `wolfi-base` container that binary comes from `tests/setup-wolfie.sh`'s `apk add
-   coreutils`.
+   against a SHA-256 pin before sourcing, so `sha256sum` is now required to run the CLI suite —
+   on a minimal image that means installing `coreutils`.
 7. **`-k` in `tests/unit.sh` takes one regex, not an alternation** — `-k 'a|b'` matches nothing
    and reports "No tests matched" rather than erroring.
 8. **A verb listed twice in `commandTypes` compiles, parses and runs** — but `help <verb>`
@@ -279,8 +278,8 @@ does not exist yet, so write it alongside the fix:
 ## Commit hooks
 
 `.githooks/commit-msg` is the **single source of truth** for the message rule — pure bash, no
-jq or python, so it runs in the `wolfi-base` container too. Two things call it, and neither
-duplicates the rules:
+jq or python, so it runs on a bare dev machine and in a minimal CI image alike. Two things call
+it, and neither duplicates the rules:
 
 - **git**, via `core.hooksPath`. That key is local config and **not versioned**, so a fresh
   clone has no hook until `make install-hooks` runs. Worktrees share `.git/config`, so one
@@ -361,8 +360,8 @@ run cancel each other's gate.
   *is* its pinned SHA-256, so bumping `L_lib_sha256` auto-misses the cache.
 - No apt step is needed: the csproj sets `<IncludeAssets>none</IncludeAssets>` on
   `SkiaSharp.NativeAssets.Linux`, so the shipped asset is `...NoDependencies`, whose
-  `libSkiaSharp.so` links only libc/libm/libdl/libpthread. `setup-wolfie.sh`'s fontconfig
-  install is a wolfi-base concern only.
+  `libSkiaSharp.so` links only libc/libm/libdl/libpthread. A minimal non-glibc image would
+  still need fontconfig; the `ubuntu-latest` runner already has it.
 - No `dotnet format --verify-no-changes`, for the same reason the inherited GitLab pipeline
   never ran one (gotcha 2): it would be red on an untouched tree.
 - The check-run name is `test / build-and-test` (`<caller job id> / <called job name>`).
