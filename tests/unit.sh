@@ -603,6 +603,64 @@ clitest_l_lib_matches_pinned_sha256() {
     L_unittest_success verify_sha256 "${L_lib_path:-}" "${L_lib_sha256:-}"
 }
 
+# .githooks/commit-msg is the single source of truth for the Conventional Commits rule: git
+# runs it via core.hooksPath (set by `make install-hooks`) and .claude/hooks/commit-msg-guard.py
+# shells out to the same script from a Claude Code PreToolUse hook. A silent regression here
+# would let both gates through, so the accept and reject sets are pinned.
+#
+# These are data tables, not tests: L_unittest_main discovers with `compgen -A function`, so a
+# clitest_* array is never collected.
+clitest_commit_msg_lint_ok=(
+    'fix(security): pin System.Security.Cryptography.Xml to 10.0.10'
+    'feat!: drop SelfUpdate'
+    'docs: link BezpieczenstwoAgentow'
+    'chore(deps): bump the vendored client'
+    'refactor(rate-limit)!: retry only on HTTP 429'
+    # Exempt: git and GitHub write these themselves. Three "Merge pull request" commits are
+    # already in this repository's history.
+    'Merge pull request #3 from klemens-st/worktree-github-actions-ci'
+    'Revert "feat: x"'
+    'fixup! fix: x'
+)
+
+clitest_commit_msg_lint_bad=(
+    # The message that prompted the hook.
+    'Enforce conventional commits'
+    'Initialize Claude settings'
+    'Fix(X): thing'             # type and scope must be lowercase
+    'fix(Security): thing'
+    'wibble: thing'             # not a known type
+    'fix:no space after colon'
+    'fix: corrected the thing.' # no trailing period
+    'fix: '                     # empty subject
+)
+
+clitest_commit_msg_lint() {
+    local hook="$DIR/../.githooks/commit-msg" header
+    L_unittest_success test -x "$hook"
+
+    L_with_cd_tmpdir
+    for header in "${clitest_commit_msg_lint_ok[@]}"; do
+        printf '%s\n' "$header" >msg
+        L_unittest_cmd "$hook" msg
+    done
+    for header in "${clitest_commit_msg_lint_bad[@]}"; do
+        printf '%s\n' "$header" >msg
+        L_unittest_cmd ! "$hook" msg
+    done
+
+    # 72 characters passes, 73 does not.
+    printf 'fix: %s\n' "$(printf 'x%.0s' {1..67})" >msg
+    L_unittest_cmd "$hook" msg
+    printf 'fix: %s\n' "$(printf 'x%.0s' {1..68})" >msg
+    L_unittest_cmd ! "$hook" msg
+
+    # git strips its own comment block before committing, so the hook must lint the first real
+    # line rather than the "# Please enter the commit message" boilerplate.
+    printf '# Please enter the commit message for your changes.\n#\nfix(x): real header\n' >msg
+    L_unittest_cmd "$hook" msg
+}
+
 # The verb list in Program.cs is hand-maintained and docs/ is linked by hand from README.md,
 # so nothing but this test keeps the three in step. All three had already drifted when it was
 # written: README linked docs/TokenRefresh.md, renamed to TestTokenRefresh.md eight commits
