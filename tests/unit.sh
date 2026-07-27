@@ -232,11 +232,6 @@ clitest_dodaj_pozycje_stawka_z_procentem() {
     L_unittest_vareq p14_1 "406.33"
 }
 
-# OPEN FINDING — fails against the current tree; passes once the HelpText stops offering 0.
-#
-# 0% has no P_13_x/P_14_x pair, so the command refuses it (clitest_dodaj_pozycje_stawka_
-# nieobslugiwana pins the refusal). Advertising it in --help sends the operator straight into
-# that refusal. The repo convention also asks for Polish HelpText on any option touched.
 # OPEN FINDING — the CLI intermittently loses ALL of its log output.
 #
 # Log.ConfigureLogging builds an ILoggerFactory with AddConsole, whose provider queues messages
@@ -249,11 +244,14 @@ clitest_dodaj_pozycje_stawka_z_procentem() {
 # exit 1 with no message has nothing to act on, and the natural response — retry — is the wrong
 # one for a command that files invoices.
 #
-# Measured on this tree at ~6% of runs (6/100, and 5/100 on a second sample). Disposing the
-# factory before Main returns takes it to 0 misses in 330 runs. This test is therefore
-# probabilistic in one direction only: with the fix in place it is not expected to fail at all,
-# while without it 40 iterations catch the defect about 9 times in 10. It is deliberately not
-# the whole suite's worth of iterations — a cheap sentinel beats a slow certainty here.
+# Measured on this tree at ~6% of runs (6/100 and 5/100 sequentially, 5.5% independently on
+# another machine). Disposing the factory before Main returns takes it to 0 misses in 1530 runs.
+#
+# The iterations run concurrently: 120 at -P8 costs ~7s, where 40 sequential runs cost ~12s.
+# The extra iterations are the point, not the speed. Sequentially 40 runs left a real false-pass
+# rate (one clean trial in ten); at 120 there were no false passes in ten trials, with a
+# worst-case margin of 4 misses. On the fixed binary: 0 misses in 1200 invocations. So the test
+# is probabilistic in one direction only — it is not expected to go red on a correct tree.
 #
 # It is also the true cause of the intermittent failures seen in this suite, which land on
 # whichever Log-dependent test happens to lose the race. It is NOT xUnit test parallelism: the
@@ -261,15 +259,15 @@ clitest_dodaj_pozycje_stawka_z_procentem() {
 clitest_log_nie_gubi_komunikatow() {
     L_with_cd_tmpdir
     cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
-    local i output puste=0
-    for i in $(seq 1 40); do
-        rm -f out.xml
-        # Refused before any write, and the refusal goes through Log.Error — so every run must
-        # print it. 8% has no P_13_2/P_14_2 pair in this fixture.
-        output=$(cli DodajPozycjeNaFakturze test_invoice.xml out.xml \
-            --nazwa "Pozycja" --miara "szt" --ilosc 1 --cena-netto 10.00 --stawka-vat 8 2>&1 || true)
-        grep -q "P_13_2" <<<"$output" || puste=$((puste + 1))
-    done
+    local puste
+    # 8% has no P_13_2/P_14_2 pair in this fixture, so every run is refused before anything is
+    # written — the refusal goes through Log.Error, so every run must print it. Each worker
+    # still gets its own output path so the concurrency cannot be what makes them agree.
+    # cli() is a shell function and cannot cross into xargs, hence "$opt_exe" directly.
+    puste=$(seq 1 120 | xargs -P 8 -I{} sh -c '
+        out=$("$1" DodajPozycjeNaFakturze test_invoice.xml "out.{}.xml" --nazwa Pozycja \
+            --miara szt --ilosc 1 --cena-netto 10.00 --stawka-vat 8 2>&1 || true)
+        case "$out" in *P_13_2*) ;; *) echo MISS ;; esac' _ "$opt_exe" | grep -c MISS || true)
     L_unittest_vareq puste "0"
 }
 
@@ -294,6 +292,11 @@ clitest_dodaj_pozycje_nie_zapisuje_niepoprawnego_xml() {
     L_unittest_success test ! -e out.xml
 }
 
+# OPEN FINDING — fails against the current tree; passes once the HelpText stops offering 0.
+#
+# 0% has no P_13_x/P_14_x pair, so the command refuses it (clitest_dodaj_pozycje_stawka_
+# nieobslugiwana pins the refusal). Advertising it in --help sends the operator straight into
+# that refusal. The repo convention also asks for Polish HelpText on any option touched.
 clitest_dodaj_pozycje_help_nie_obiecuje_stawki_zero() {
     local output
     L_unittest_cmd -v output cli DodajPozycjeNaFakturze --help
