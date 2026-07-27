@@ -28,7 +28,9 @@ public static class InvoiceTotals {
         [7] = new VatBand(7, "P_13_2", "P_14_2"),
         // Stawka obniżona druga.
         [5] = new VatBand(5, "P_13_3", "P_14_3"),
-        // Ryczałt dla rolnika ryczałtowego.
+        // Stawka obniżona trzecia — ryczałt dla taksówek osobowych (schemat_FA(3)_v1-0E.xsd:2558).
+        // Nie mylić ze zryczałtowanym zwrotem podatku dla rolnika ryczałtowego: ten należy do
+        // faktury VAT RR i nie trafia do żadnego z pól P_13_x.
         [4] = new VatBand(4, "P_13_4", "P_14_4"),
     };
 
