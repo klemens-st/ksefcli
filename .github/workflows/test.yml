@@ -1,0 +1,205 @@
+---
+# The verification gate for a single commit.
+#
+# Trigger-free on purpose: .github/workflows/ci.yml calls this for push/PR, and the
+# build-and-publish workflow will call it before shipping anything. Do NOT add
+# push/pull_request triggers here, and do NOT add a `concurrency:` key -- a concurrency group
+# declared in a called workflow applies to its jobs no matter who called it, so two different
+# callers would cancel each other's gate runs. ci.yml owns triggers and concurrency.
+#
+# This is a port of `linux_build_and_unit_test` from .gitlab-ci.yml, plus the whole-solution
+# build that the GitLab pipeline never had (see the "net6.0 gate" step below).
+name: test
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: Runner label for the gate job.
+        type: string
+        default: ubuntu-latest
+      dotnet-version:
+        description: >
+          Version spec for actions/setup-dotnet. The repo has no global.json, so nothing else
+          pins the SDK; TreatWarningsAsErrors=true means an unannounced SDK bump in the runner
+          image is a build break with no commit behind it, hence this is explicit rather than
+          "whatever the image ships".
+        type: string
+        default: '10.0.x'
+      unit-filter:
+        description: >
+          Optional filter expression for tests/unit.sh (its -r flag). Empty runs the full
+          suite, which is the default and what CI wants. This is the escape hatch for the two
+          tests that query the live registry at wl-api.mf.gov.pl and assert a third party's
+          current registered name and address -- see CLAUDE.md gotcha 5. To skip them, pass:
+            ' ! clitest_pobierz_info_o_nip && ! clitest_nowa_faktura_nip_lookup '
+          Note the grammar: !, &&, ||, ( and ) are operators and every other token is a regex.
+          Regex alternation inside a single token does NOT work (CLAUDE.md gotcha 8), so the
+          operators are the only way to combine names.
+        type: string
+        default: ''
+      upload-binary:
+        description: >
+          Upload the published, tested linux-x64 binary as an artifact. The publish workflow
+          sets this so a release ships the exact bytes tests/unit.sh ran against, rather than
+          re-publishing an unverified binary.
+        type: boolean
+        default: false
+      artifact-name:
+        description: Artifact name for the linux-x64 binary.
+        type: string
+        default: kcksefcli-linux-x64
+      retention-days:
+        description: Retention for the binary artifact.
+        type: number
+        default: 7
+    outputs:
+      artifact-name:
+        description: Name the caller should pass to actions/download-artifact.
+        value: ${{ inputs.artifact-name }}
+      artifact-id:
+        description: Artifact id of the binary. Empty unless upload-binary was true.
+        value: ${{ jobs.build-and-test.outputs.artifact-id }}
+    # No `secrets:` block, deliberately. tests/integration.sh and tests/ci.sh file REAL
+    # invoices against KSeF using a human's credentials, and testlib_setup_integration_config
+    # refuses to run at all when KCLLM is set. This workflow has no way to receive a
+    # credential, so it has no way to grow into running them.
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  build-and-test:
+    name: build-and-test
+    runs-on: ${{ inputs.runs-on }}
+    # A cold run is ~10 min: restore of 7 projects across two target frameworks, a two-TFM
+    # solution build, 224 xUnit tests, a compressed single-file publish and ~61 CLI tests.
+    # 30 leaves headroom without letting a hang burn an hour.
+    timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.upload-binary.outputs.artifact-id }}
+
+    steps:
+      # A fresh checkout has an EMPTY submodule and nothing builds: kcksefcli.slnx references
+      # five projects inside thirdparty/ksef-client-csharp. The submodule URL is public HTTPS
+      # (https://github.com/CIRFMF/ksef-client-csharp), so no credential is needed for it.
+      - name: Checkout, including the ksef-client-csharp submodule
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up the .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      # setup-dotnet's own `cache: true` needs a packages.lock.json, which this repo does not
+      # have and cannot easily have (.gitignore blocks *.lock.json), so cache the global
+      # packages folder by hand. hashFiles runs after checkout, so the submodule's csproj
+      # files are part of the key.
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.slnx') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      # tests/lib.sh downloads ~11k lines of third-party bash (L_lib.sh) and verifies it
+      # against this exact SHA-256 before sourcing it. Using the pin itself as the cache key
+      # means bumping L_lib_sha256 in tests/lib.sh automatically misses the cache, and a
+      # poisoned entry is rejected by verify_sha256 and simply re-downloaded. No restore-keys,
+      # for that same reason.
+      #
+      # Do NOT set the L_LIB_VERSION env var to skip the download: pull_L_lib then returns
+      # early without sourcing anything and clitest_l_lib_matches_pinned_sha256 fails.
+      - name: Cache the pinned L_lib.sh test harness
+        uses: actions/cache@v6
+        with:
+          path: tests/L_lib.sh
+          key: l-lib-af6771471c0dcd9068dd0f9f148780bd8069cb4b101958e063c29309e1fedd23
+
+      # Its own step so a restore/network failure is visibly distinct from a compile failure,
+      # and so the ~100 expected NU1903 warnings land in one place. They come from the
+      # submodule declaring a vulnerable System.Security.Cryptography.Xml, which src/ and
+      # tests/ already override with a direct 10.0.10 pin. They are restore warnings, not
+      # build errors: do not add -warnaserror here, do not set NUGET_AUDIT_MODE.
+      - name: Restore
+        run: dotnet restore kcksefcli.slnx
+
+      # THE net6.0 GATE. KCKSeFCli.csproj multi-targets net6.0;net10.0 but publish is
+      # -f net10.0 only, so a .NET 7+/8+ API sails through publish and breaks net6.0 silently.
+      # That happened twice (SHA256.HashData(Stream), ArgumentOutOfRangeException
+      # .ThrowIfNegativeOrZero), once for 8 commits. Only a whole-solution build catches it,
+      # and the GitLab pipeline never ran one. See CLAUDE.md gotcha 1.
+      - name: Build the whole solution (net6.0 + net10.0)
+        run: dotnet build kcksefcli.slnx -c Release --no-restore
+
+      # No --no-build: the incremental rebuild against the step above is near-free, and it
+      # removes a dependency on the solution build having laid the test assembly down exactly
+      # where the test host looks.
+      - name: Unit and regression tests (xUnit)
+        run: >
+          dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj
+          -c Release --no-restore
+          --logger 'trx;LogFileName=test-results.trx'
+          --results-directory artifacts/test-results
+
+      # No --no-restore: a RID-specific publish can need assets the plain solution restore did
+      # not fetch, and the NuGet cache makes the re-restore cheap.
+      - name: Publish linux-x64
+        run: >
+          dotnet publish src/KCKSeFCli/KCKSeFCli.csproj
+          -c Release -r linux-x64 -f net10.0 -o dist
+
+      - name: Smoke the published binary
+        run: |
+          ./dist/kcksefcli --version
+          ./dist/kcksefcli --help > /dev/null
+
+      # The black-box CLI suite: unit.sh sourcing cmdauth.sh and test_parsedate.sh.
+      #
+      # The filter is passed through the environment and branched on in bash rather than
+      # interpolated into the run: line, which would be a shell-injection seam.
+      #
+      # Options MUST precede the binary path -- `exe` is nargs=remainder in
+      # tests/lib.sh:testlib_main, so `unit.sh ./dist/kcksefcli -r foo` passes -r to the CLI
+      # as a verb and every test fails.
+      - name: Black-box CLI tests
+        env:
+          UNIT_FILTER: ${{ inputs.unit-filter }}
+        run: |
+          if [[ -n "$UNIT_FILTER" ]]; then
+            ./tests/unit.sh -r "$UNIT_FILTER" ./dist/kcksefcli
+          else
+            ./tests/unit.sh ./dist/kcksefcli
+          fi
+
+      # Run-scoped name so two calls within one run (a CI gate and a publish gate) cannot
+      # collide on the artifact name.
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/test-results
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload the tested linux-x64 binary
+        id: upload-binary
+        if: ${{ inputs.upload-binary }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/kcksefcli
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error

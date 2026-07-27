@@ -1,0 +1,41 @@
+---
+# Triggers only. All the work lives in test.yml so the build-and-publish workflow can reuse
+# the identical gate instead of duplicating it.
+#
+# No paths-ignore for docs-only changes: clitest_docs_match_verbs asserts that docs/*.md, the
+# README links and the commandTypes array in Program.cs stay in step, so a docs-only commit is
+# exactly the commit that test exists to catch.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege. A called workflow can never exceed the caller's grant, so this caps
+# test.yml too.
+permissions:
+  contents: read
+
+# Cancel superseded PR runs, but never cancel a run on main: that run populates the shared
+# NuGet cache every PR restores from, and it is what gates releases.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Renaming this job id, or the build-and-test job inside test.yml, changes the check-run
+  # name (it is "<caller job id> / <called job name>", i.e. "test / build-and-test"). If a
+  # required status check is ever configured on main, a rename silently orphans it and blocks
+  # every PR forever waiting on a check that no longer reports.
+  test:
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+    with:
+      # Deliberately not left at the default of false: this exercises the whole input/output
+      # plumbing on day one, so the publish workflow inherits a path that already works, and
+      # reviewers get a downloadable binary on every PR.
+      upload-binary: true
+      artifact-name: kcksefcli-linux-x64
+      retention-days: 7
