@@ -25,6 +25,28 @@ dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
+The 60 come from three files: `unit.sh` (51) sources `cmdauth.sh` (3) and `test_parsedate.sh` (6).
+Called with no binary path, `unit.sh` runs `make build` and tests the `cli` symlink (Debug) instead.
+
+**`tests/integration.sh` and `tests/ci.sh` cannot be run from an agent session.**
+`testlib_setup_integration_config` calls `L_fatal "Integration tests have to executed by a human"`
+whenever `KCLLM` is set, before anything else. They file real invoices against the KSeF test
+environment with credentials found at `.git/KSEF/kcksefcli.yaml` (or `.git/kcksefcli.yaml`,
+`.git/secrets/`, `.git/secret/`, `secrets/`). `ci.sh` is `integration.sh` minus
+`clitest_z_integration_PobierzFaktury_prod`, which is the one test that touches **production**.
+`./run.sh` loads the same config, so it is a human's tool too.
+
+## Layout
+
+One file per verb, flat in `src/KCKSeFCli/` — there is no `Commands/` subdirectory.
+`Utils/` holds the shared logic (`InvoiceTotals`, `SafePath`, `DangerousOperation`,
+the rate-limit wrapper), `Resources/` the vendored XSD chain, `thirdparty/ksef-client-csharp`
+the upstream client submodule, `docs/` one Polish `.md` per verb linked from `README.md`.
+
+**A new verb must be added to the `commandTypes` array in `Program.cs`.** It is hand-maintained,
+not a reflection scan, so a command class missing from it compiles and simply is not a verb.
+Add its `docs/<Verb>.md` in the same commit; nothing enforces that either.
+
 ## Gotchas
 
 1. **Always `dotnet build` the whole solution before committing.** Project multi-targets
@@ -47,6 +69,11 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
    registered details breaks the test without anything being wrong here. Check the API response
    before hunting for a bug in our code.
 6. **`.format_check` in `.gitlab-ci.yml` never runs** — leading dot makes it a template job.
+   What does run: `dotnet test`, then publish, then `unit.sh` against the published binary, then
+   the same `unit.sh` plus `ci.sh` again in a `wolfi-base` image provisioned by
+   `tests/setup-wolfie.sh` (that `apk add coreutils` is what supplies `sha256sum` — see gotcha 7).
+   `.build` is also dot-prefixed, but legitimately: jobs `extends:` it. `.format_check` is
+   extended by nothing.
 7. `tests/L_lib.sh` is downloaded at test time and gitignored. Don't commit it. It is verified
    against a SHA-256 pin before sourcing, so `sha256sum` is now required to run the CLI suite.
 8. **`-k` in `tests/unit.sh` takes one regex, not an alternation** — `-k 'a|b'` matches nothing
