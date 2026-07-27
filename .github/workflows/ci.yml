@@ -4,9 +4,13 @@
 # exactly the commit that test exists to catch.
 name: CI
 
+# deps/** is how submodule-bump.yml gets its branches gated. A PR opened by GITHUB_TOKEN does
+# not fire pull_request, so without this trigger a bump PR would carry no checks at all. Check
+# runs attach to a commit SHA rather than to an event, so the push run surfaces on the PR and
+# satisfies a required `test / build-and-test` check exactly as a pull_request run would.
 on:
   push:
-    branches: [main]
+    branches: [main, 'deps/**']
   pull_request:
 
 # A called workflow can never exceed the caller's grant, so this caps test.yml too.

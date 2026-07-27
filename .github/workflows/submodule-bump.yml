@@ -1,0 +1,360 @@
+---
+# Opens a draft PR when CIRFMF/ksef-client-csharp publishes a new stable release.
+#
+# This workflow deliberately does NOT run the build. It pushes to a deps/** branch, and
+# ci.yml triggers on push to deps/**, so the gate runs against the bump commit and its check
+# attaches to that SHA -- which is what the PR then displays. That indirection exists because
+# a PR opened by GITHUB_TOKEN does not fire pull_request workflows, so opening the PR here and
+# expecting ci.yml to pick it up would produce a draft PR with no checks at all, which is the
+# opposite of the point. The alternative is a PAT or GitHub App token; the push trigger buys
+# the same gate with no credential.
+#
+# It also does not fix anything. The one bump in this repo's history (eb30f82, v2.2.0 ->
+# v2.7.0) cost a compile error, so a red PR is an expected outcome and is the signal being
+# bought here -- early, per-release, instead of five versions deep.
+name: submodule bump
+
+on:
+  schedule:
+    # Off the hour: the shared runner queue is congested at :00 and a scheduled run that
+    # cannot get a runner is simply dropped. Upstream averages a stable tag every ~2 weeks,
+    # so daily is ample and costs one ls-remote on the days nothing moved.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Never cancel: a half-run that pushed a branch without opening its PR needs a human to
+# notice, and the dedup guard would then skip the branch forever.
+concurrency:
+  group: submodule-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # A fork inherits the schedule and would push to its own default branch on a cron nobody
+    # set up. Cheaper to refuse here than to explain the stray PRs.
+    if: github.repository == 'klemens-st/ksefcli'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      SUBMODULE_PATH: thirdparty/ksef-client-csharp
+
+    steps:
+      # No `submodules:`. The pointer is moved with `git update-index --cacheinfo` and the
+      # analysis reads a separate blobless clone, so the submodule is never checked out --
+      # a full recursive checkout would be the slowest step in the job for no benefit.
+      # Credentials ARE persisted here, unlike test.yml: this job pushes.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # Everything downstream keys off `bump=true`. Tag names reach the shell only through
+      # $GITHUB_OUTPUT, never through a ${{ }} interpolation inside a run: block -- they come
+      # from a third party, and the regex filter is a validation step, not a reason to skip
+      # the discipline.
+      - name: Resolve the latest stable upstream release
+        id: detect
+        run: |
+          set -euo pipefail
+
+          # Read the URL from .gitmodules so this cannot drift from the submodule it watches.
+          url=$(git config -f .gitmodules --get "submodule.${SUBMODULE_PATH}.url")
+          echo "watching $url"
+
+          # The RC5.x/RC6.x tags are a dead prerelease line that sorts unpredictably against
+          # the 2.x releases. Matching bare N.N.N excludes them, and keeps excluding whatever
+          # prerelease convention upstream adopts next, until a stable tag lands.
+          tags=$(git ls-remote --tags --refs "$url" | sed 's|\t*refs/tags/|\t|')
+          stable=$(echo "$tags" | awk -F'\t' '$2 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {print $2"\t"$1}' | sort -V)
+          if [[ -z $stable ]]; then
+            echo "::error::no stable N.N.N tags found upstream -- has the tagging scheme changed?"
+            exit 1
+          fi
+
+          new_version=$(echo "$stable" | tail -1 | cut -f1)
+          new_sha=$(echo "$stable" | tail -1 | cut -f2)
+          old_sha=$(git ls-tree HEAD "$SUBMODULE_PATH" | awk '{print $3}')
+
+          # Name the current pin only if it is itself a stable tag. A pin parked on an
+          # untagged commit is legitimate and must not abort the run, so this stays empty
+          # rather than failing.
+          old_version=$(echo "$stable" | awk -F'\t' -v s="$old_sha" '$2 == s {print $1}')
+
+          echo "pinned  ${old_version:-(untagged)} $old_sha"
+          echo "latest  $new_version $new_sha"
+
+          {
+            echo "old_sha=$old_sha"
+            echo "new_sha=$new_sha"
+            echo "old_version=$old_version"
+            echo "new_version=$new_version"
+            echo "branch=deps/ksef-client-csharp-$new_version"
+            echo "url=$url"
+          } >> "$GITHUB_OUTPUT"
+
+          # Compared by SHA, not by tag name: a tag that upstream moved must register as a
+          # change, and a tag renamed around an unchanged commit must not.
+          if [[ $old_sha == "$new_sha" ]]; then
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::already on the latest stable release ($new_version)"
+          else
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --state all, not --state open: a bump PR that was closed unmerged was rejected on
+      # purpose, and reopening it every morning would be the worst failure mode this workflow
+      # has. Deleting the branch is the documented way to ask for it again.
+      - name: Skip versions already proposed
+        id: dedup
+        if: steps.detect.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if [[ -n $(git ls-remote --heads origin "$BRANCH") ]]; then
+            echo "::notice::branch $BRANCH already exists -- nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n $(gh pr list --state all --head "$BRANCH" --json number --jq '.[].number') ]]; then
+            echo "::notice::a PR for $BRANCH already exists -- nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # Blobless rather than shallow: the analysis diffs two tags that can be months apart,
+      # which a --depth clone cannot do. --no-checkout because every read is `git show`/`git
+      # diff` against an explicit SHA; nothing needs a work tree.
+      - name: Clone upstream for analysis
+        id: upstream
+        if: steps.detect.outputs.bump == 'true' && steps.dedup.outputs.skip == 'false'
+        env:
+          URL: ${{ steps.detect.outputs.url }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout "$URL" "$RUNNER_TEMP/upstream"
+
+      # The whole reason this is not Dependabot. Each check answers a question a reviewer
+      # would otherwise answer by hand, and three of them are specific to invariants this
+      # repository documents in CLAUDE.md.
+      - name: Build the PR body
+        id: body
+        if: steps.detect.outputs.bump == 'true' && steps.dedup.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLD_SHA: ${{ steps.detect.outputs.old_sha }}
+          NEW_SHA: ${{ steps.detect.outputs.new_sha }}
+          OLD_VERSION: ${{ steps.detect.outputs.old_version }}
+          NEW_VERSION: ${{ steps.detect.outputs.new_version }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+          up="$RUNNER_TEMP/upstream"
+          body="$RUNNER_TEMP/pr-body.md"
+          slug=CIRFMF/ksef-client-csharp
+
+          {
+            echo "Automated bump of the official Ministry of Finance client, \
+          \`${OLD_VERSION:-$OLD_SHA}\` -> \`$NEW_VERSION\`."
+            echo
+            echo "- Compare: https://github.com/$slug/compare/$OLD_SHA...$NEW_SHA"
+            echo "- Release: https://github.com/$slug/releases/tag/$NEW_VERSION"
+            echo
+          } > "$body"
+
+          # --- Security invariant: the Cryptography.Xml pin ------------------------------
+          # KCKSeFCli.csproj pins System.Security.Cryptography.Xml to 10.0.10 because the
+          # submodule declares a vulnerable version. If upstream ever declares a version
+          # ABOVE the pin, the pin silently becomes a downgrade, and the ~100 expected NU1903
+          # warnings stop meaning what CLAUDE.md gotcha 4 says they mean.
+          pin=$(sed -n 's/.*Include="System.Security.Cryptography.Xml" Version="\([^"]*\)".*/\1/p' \
+                src/KCKSeFCli/KCKSeFCli.csproj | head -1)
+          # The submodule declares this package in several csprojs and need not agree with
+          # itself, so the comparison is against the HIGHEST declared version. `sort -V`, not
+          # `sort -u`: lexicographically 10.0.10 sorts below 10.0.7 and the check would invert.
+          mapfile -t declared_all < <(git -C "$up" grep -h "System.Security.Cryptography.Xml" \
+            "$NEW_SHA" -- '*.csproj' | sed -n 's/.*Version="\([^"]*\)".*/\1/p' | sort -Vu)
+          declared_max=$(printf '%s\n' "${declared_all[@]}" | sort -V | tail -1)
+          declared=$(printf '%s, ' "${declared_all[@]}"); declared=${declared%, }
+          {
+            echo "## Security pin"
+            echo
+            echo "\`System.Security.Cryptography.Xml\` — pinned here: \`$pin\`; \
+          declared by the submodule at $NEW_VERSION: \`${declared:-none}\`."
+            if [[ -n $declared_max ]] && \
+               [[ $(printf '%s\n' "$pin" "$declared_max" | sort -V | tail -1) != "$pin" ]]; then
+              echo
+              echo "> [!WARNING]"
+              echo "> The submodule now declares a **higher** version than the pin. \
+          Re-check the pin before merging — it may have become a downgrade."
+            fi
+            echo
+          } >> "$body"
+
+          # --- kcksefcli.slnx hardcodes five paths into the submodule --------------------
+          # A rename or removal upstream breaks `dotnet restore kcksefcli.slnx` before
+          # anything compiles. Cheaper to say so here than to read it out of a build log.
+          git -C "$up" ls-tree -r --name-only "$NEW_SHA" > "$RUNNER_TEMP/upstream-files.txt"
+          missing=""
+          while read -r rel; do
+            grep -qxF "$rel" "$RUNNER_TEMP/upstream-files.txt" || missing+="- \`$rel\`"$'\n'
+          done < <(sed -n 's|.*Path="thirdparty/ksef-client-csharp/\([^"]*\)".*|\1|p' kcksefcli.slnx)
+          {
+            echo "## Solution references"
+            echo
+            if [[ -z $missing ]]; then
+              echo "All \`kcksefcli.slnx\` project paths still resolve at $NEW_VERSION."
+            else
+              echo "> [!CAUTION]"
+              echo "> These \`kcksefcli.slnx\` paths no longer exist upstream. \
+          \`dotnet restore\` will fail until the solution file is updated:"
+              echo
+              echo "$missing"
+            fi
+            echo
+          } >> "$body"
+
+          # --- Vendored upstream copies -------------------------------------------------
+          # src/KCKSeFCli/Utils/ holds verbatim copies of upstream test helpers, each headed
+          # by a `// Copied from <path>` line. Discovering them from that header rather than
+          # a hardcoded list means a newly vendored file is covered the day it lands.
+          {
+            echo "## Vendored copies in \`src/KCKSeFCli/Utils/\`"
+            echo
+            echo "Upstream churn in files this repository keeps a verbatim copy of. \
+          Churn is not automatically a problem — the copies are deliberately not re-synced \
+          — but it is where an upstream fix would be silently missed."
+            echo
+          } >> "$body"
+          drift=""
+          while read -r rel; do
+            stat=$(git -C "$up" diff --numstat "$OLD_SHA" "$NEW_SHA" -- "$rel" || true)
+            [[ -n $stat ]] && drift+="- \`$rel\` — +$(echo "$stat" | cut -f1)/-$(echo "$stat" | cut -f2)"$'\n'
+          done < <(sed -n 's|^// Copied from thirdparty/ksef-client-csharp/||p' src/KCKSeFCli/Utils/*.cs)
+          if [[ -n $drift ]]; then printf '%s\n' "$drift" >> "$body"; else
+            echo "None changed." >> "$body"; echo >> "$body"; fi
+
+          # --- Project file churn -------------------------------------------------------
+          {
+            echo "## Upstream project files"
+            echo
+            echo '```'
+            git -C "$up" diff --stat "$OLD_SHA" "$NEW_SHA" -- '*.csproj' || echo "(no changes)"
+            echo '```'
+            echo
+          } >> "$body"
+
+          # --- Supersedes ---------------------------------------------------------------
+          superseded=$(gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("deps/ksef-client-csharp-")) | .number')
+          if [[ -n $superseded ]]; then
+            {
+              echo "## Supersedes"
+              echo
+              for n in $superseded; do echo "- #$n"; done
+              echo
+            } >> "$body"
+          fi
+
+          # --- Upstream release notes ---------------------------------------------------
+          # Fenced and truncated on purpose. This is third-party prose landing in a PR that
+          # both humans and agents read; a fence stops it rendering as headings, task lists
+          # or directives of its own. Tags do not always have a release attached, hence the
+          # tolerated failure.
+          notes=$(gh api "repos/$slug/releases/tags/$NEW_VERSION" --jq .body 2>/dev/null || true)
+          if [[ -n $notes ]]; then
+            {
+              echo "## Upstream release notes"
+              echo
+              echo "<details><summary>$NEW_VERSION (verbatim, untrusted)</summary>"
+              echo
+              echo '```text'
+              printf '%.4000s\n' "$notes"
+              echo '```'
+              echo
+              echo "</details>"
+              echo
+            } >> "$body"
+          fi
+
+          {
+            echo "---"
+            echo
+            echo "Opened as a draft: a bump is expected to need source changes \
+          (v2.2.0 -> v2.7.0 cost one compile error), and the whole-solution build is the \
+          only thing that compiles \`net6.0\`. Checks on this branch come from the \
+          \`push: deps/**\` trigger in \`ci.yml\`."
+            echo
+            echo "_Generated by [Claude Code](https://claude.ai/code)_"
+          } >> "$body"
+
+      # The commit is made with the same message rule the repo enforces locally, then checked
+      # against .githooks/commit-msg explicitly. core.hooksPath is unversioned local config
+      # set by `make install-hooks`, so a runner has no hook installed and the gate would
+      # otherwise not apply to the one commit nobody reviews before it is written.
+      - name: Commit the bump
+        id: commit
+        if: steps.detect.outputs.bump == 'true' && steps.dedup.outputs.skip == 'false'
+        env:
+          NEW_SHA: ${{ steps.detect.outputs.new_sha }}
+          OLD_VERSION: ${{ steps.detect.outputs.old_version }}
+          NEW_VERSION: ${{ steps.detect.outputs.new_version }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+
+          # Sets the gitlink straight in the index. The submodule is not initialised in this
+          # job and does not need to be -- a bump is a 1-line change to a 160000 entry.
+          git update-index --cacheinfo "160000,$NEW_SHA,$SUBMODULE_PATH"
+
+          # Matches eb30f82's subject. Header stays well inside the 72-char limit even at
+          # three-digit version parts.
+          msg="$RUNNER_TEMP/commit-msg.txt"
+          printf 'chore: bump ksef-client-csharp v%s -> v%s\n' \
+            "${OLD_VERSION:-unknown}" "$NEW_VERSION" > "$msg"
+          printf '\nSee the pull request body for the upstream compare, the state of the\n' >> "$msg"
+          printf 'System.Security.Cryptography.Xml pin, and churn in the vendored copies\n' >> "$msg"
+          printf 'under src/KCKSeFCli/Utils/.\n' >> "$msg"
+
+          .githooks/commit-msg "$msg"
+          git commit --quiet -F "$msg"
+
+      - name: Push the branch
+        if: steps.detect.outputs.bump == 'true' && steps.dedup.outputs.skip == 'false'
+        env:
+          BRANCH: ${{ steps.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+          for delay in 2 4 8 0; do
+            git push -u origin "$BRANCH" && exit 0
+            [[ $delay -eq 0 ]] && break
+            echo "push failed, retrying in ${delay}s"
+            sleep "$delay"
+          done
+          exit 1
+
+      - name: Open the draft PR
+        if: steps.detect.outputs.bump == 'true' && steps.dedup.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLD_VERSION: ${{ steps.detect.outputs.old_version }}
+          NEW_VERSION: ${{ steps.detect.outputs.new_version }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+          gh pr create \
+            --draft \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: bump ksef-client-csharp v${OLD_VERSION:-unknown} -> v$NEW_VERSION" \
+            --body-file "$RUNNER_TEMP/pr-body.md"
