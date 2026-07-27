@@ -248,10 +248,13 @@ clitest_dodaj_pozycje_stawka_z_procentem() {
 # another machine). Disposing the factory before Main returns takes it to 0 misses in 1530 runs.
 #
 # The iterations run concurrently: 120 at -P8 costs ~7s, where 40 sequential runs cost ~12s.
-# The extra iterations are the point, not the speed. Sequentially 40 runs left a real false-pass
-# rate (one clean trial in ten); at 120 there were no false passes in ten trials, with a
-# worst-case margin of 4 misses. On the fixed binary: 0 misses in 1200 invocations. So the test
-# is probabilistic in one direction only — it is not expected to go red on a correct tree.
+# The extra iterations are the point, not the speed. The per-run miss rate is indistinguishable
+# between the two modes (400 runs each way came back 30 and 30), so the count is what buys the
+# margin: across the 5.5-7.5% range measured above, N=40 leaves a false-pass rate somewhere
+# around 1-in-10 to 1-in-20, while N=120 puts it between 1-in-900 and 1-in-11,000. Ten trials
+# at N=120 had no false passes, worst case 4 misses. On the fixed binary: 0 misses in 1200
+# invocations. So the test is probabilistic in one direction only — it is not expected to go
+# red on a correct tree.
 #
 # It is also the true cause of the intermittent failures seen in this suite, which land on
 # whichever Log-dependent test happens to lose the race. It is NOT xUnit test parallelism: the
