@@ -93,9 +93,16 @@ public static class InvoiceTotals {
     /// Grupuje pozycje po paśmie stawek i liczy VAT raz od sumy netto pasma, a nie osobno dla
     /// każdej pozycji. Zaokrąglanie każdej pozycji z osobna kumuluje błąd: trzy pozycje po
     /// 0,33 zł przy 23% dają 0,24 zł zamiast poprawnych 0,23 zł.
+    ///
+    /// Wynik jest kluczowany parą pól, a nie stawką. Kilka stawek dzieli jedną parę (23% i 22%
+    /// trafiają do P_13_1/P_14_1, 8% i 7% do P_13_2/P_14_2), więc grupowanie po stawce zwracało
+    /// dwie sumy wskazujące na ten sam element: wywołujący wpisywał obie pod ten sam adres i
+    /// wygrywała druga, mimo że P_15 liczyło obie pozycje. Prawo nie dopuszcza obu stawek pary
+    /// na jednej fakturze, ale WystawKorekte czyta cudzy XML i musi policzyć poprawnie to, co
+    /// dostanie, zamiast po cichu rozjeżdżać sumy.
     /// </summary>
     public static Summary Summarize(IEnumerable<(string? Rate, decimal Net)> lines) {
-        Dictionary<int, (VatBand Band, decimal Net)> byBand = new();
+        Dictionary<int, (VatBand Band, decimal Net)> byRate = new();
         List<string> unsupported = new();
         decimal unsupportedNet = 0m;
 
@@ -110,18 +117,37 @@ public static class InvoiceTotals {
                 continue;
             }
             int key = band.Value.Percent;
-            decimal running = byBand.TryGetValue(key, out (VatBand Band, decimal Net) existing)
+            decimal running = byRate.TryGetValue(key, out (VatBand Band, decimal Net) existing)
                 ? existing.Net
                 : 0m;
-            byBand[key] = (band.Value, running + net);
+            byRate[key] = (band.Value, running + net);
         }
 
-        List<BandTotal> bands = byBand.Values
-            .OrderByDescending(entry => entry.Band.Percent)
-            .Select(entry => new BandTotal(
-                entry.Band,
-                RoundMoney(entry.Net),
-                VatFor(RoundMoney(entry.Net), entry.Band.Percent)))
+        // Dwa etapy, i kolejność ma znaczenie dla kwot. Najpierw VAT od sumy netto danej
+        // *stawki* — to jest właśnie liczenie od sumy pasma, którego broni komentarz wyżej.
+        // Dopiero potem sumowanie stawek dzielących parę pól, osobno netto i osobno VAT.
+        //
+        // VAT-u nie wolno przeliczyć z połączonego netto po jednej stawce: 100,00 zł przy 23%
+        // i 100,00 zł przy 22% to 45,00 zł podatku, a VatFor(200,00, 23) dałoby 46,00 zł —
+        // poprawną kwotę zamieniłoby to na błędną.
+        Dictionary<string, BandTotal> byField = new();
+
+        foreach ((VatBand Band, decimal Net) entry in byRate.Values.OrderByDescending(e => e.Band.Percent)) {
+            decimal net = RoundMoney(entry.Net);
+            decimal vat = VatFor(net, entry.Band.Percent);
+
+            if (byField.TryGetValue(entry.Band.NetField, out BandTotal running)) {
+                // Pasmo reprezentuje stawka wyższa, bo pętla idzie malejąco i pierwsza trafia
+                // do słownika: dla pary 23/22 zostaje 23. Percent służy już tylko komunikatom.
+                byField[entry.Band.NetField] =
+                    running with { Net = running.Net + net, Vat = running.Vat + vat };
+            } else {
+                byField[entry.Band.NetField] = new BandTotal(entry.Band, net, vat);
+            }
+        }
+
+        List<BandTotal> bands = byField.Values
+            .OrderByDescending(band => band.Band.Percent)
             .ToList();
 
         return new Summary(
