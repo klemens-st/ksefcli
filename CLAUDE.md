@@ -19,9 +19,9 @@ Needs network to `api.nuget.org` and `github.com`.
 
 ```bash
 dotnet build                                                   # WHOLE solution — see gotcha 1
-dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 211 tests
+dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 224 tests
 dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
-./tests/unit.sh ./dist/kcksefcli                                # 57 CLI tests (publish first)
+./tests/unit.sh ./dist/kcksefcli                                # 60 CLI tests (publish first)
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
