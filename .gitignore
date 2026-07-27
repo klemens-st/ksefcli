@@ -88,3 +88,7 @@ dist
 /tests/L_lib.sh.tmp.*
 TODO.md
 pliki-do-pobrania-ksef/
+
+# Scratch git worktrees created by Claude Code sessions (EnterWorktree). Disposable:
+# the branch lives in .git, so nothing here is the only copy of any work.
+/.claude/worktrees/
