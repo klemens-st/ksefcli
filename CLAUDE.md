@@ -57,10 +57,13 @@ the top of that test (`help`, `version`, `TestSkiaSharp`; `Configuration`,
    (`SHA256.HashData(Stream)` is .NET 7+; .NET 6 has only the `byte[]` overload). Publish is
    `-f net10.0`; build is not. Recurred with `ArgumentOutOfRangeException.ThrowIfNegativeOrZero`
    (.NET 8+) — check any convenience overload's availability before using it.
-2. **`make test` rewrites ~30 files** — it runs `dotnet format` without `--verify-no-changes`.
-   Use `dotnet test` directly. The drift is pre-existing, mostly in verbatim copies of upstream
-   client helpers (`Utils/AsyncPollingUtils.cs`, `BatchSessionUtils.cs`, `KsefRateLimitWrapper.cs`);
-   reformatting them would complicate re-syncing with upstream.
+2. **`make format` rewrites ~30 files** — it runs `dotnet format` without `--verify-no-changes`.
+   Use `dotnet test` directly to run tests, and `make test-format` to check formatting without
+   touching anything. There is deliberately **no `make test` target**: it depended on `format`,
+   so running the tests reformatted the tree as a side effect. The drift is pre-existing, mostly
+   in verbatim copies of upstream client helpers (`Utils/AsyncPollingUtils.cs`,
+   `BatchSessionUtils.cs`, `KsefRateLimitWrapper.cs`); reformatting them would complicate
+   re-syncing with upstream.
 3. **`TreatWarningsAsErrors=true`** — any new warning fails the build.
 4. **~100 `NU1903` warnings are expected**, from the submodule declaring a vulnerable
    `System.Security.Cryptography.Xml`. Not breakage.

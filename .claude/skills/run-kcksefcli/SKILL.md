@@ -146,9 +146,10 @@ they abort immediately when `KCLLM` is set, and they file real invoices.
   vulnerable `System.Security.Cryptography.Xml`. Not breakage. The driver filters
   them so a real error is visible; `TreatWarningsAsErrors=true` means anything
   *new* does fail the build.
-- **Don't use `make test`** — it runs `dotnet format` without
-  `--verify-no-changes` and rewrites ~30 files. `make build` targets Debug and
-  the `cli` symlink, not `dist/`.
+- **There is no `make test` target** — it was removed because it depended on
+  `format`, which runs `dotnet format` without `--verify-no-changes` and rewrites
+  ~30 files. Run `dotnet test` directly. `make build` targets Debug and the `cli`
+  symlink, not `dist/`.
 - **First `XML2PDF` downloads ~74 MB** from `github.com/Kamilcuk/ksef-pdf-generator`
   (~35 s) into `~/.cache/kcksefcli/`, verifies it against a SHA-256 pinned in
   `XML2PDFCommand`, then `chmod +x`. Subsequent runs are ~1 s. Deleting that cache

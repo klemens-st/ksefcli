@@ -247,22 +247,24 @@ błędem bez nich. Konfigurację umieść w `secrets/kcksefcli.yaml` albo
 Skróty w `Makefile`:
 
 ```bash
-make build        # budowa
-make test         # UWAGA: uruchamia `dotnet format`, który MODYFIKUJE pliki źródłowe
+make build        # budowa (inicjalizuje też submoduł)
 make test-format  # sprawdzenie formatowania bez modyfikacji
+make format       # UWAGA: uruchamia `dotnet format`, który MODYFIKUJE pliki źródłowe
 ```
 
-**`make test` przeformatuje ci drzewo.** Zależy od celu `format`, który uruchamia
-`dotnet format` bez `--verify-no-changes`, więc przepisuje pliki. Obecnie dotyka ok. 30 plików,
+**Celu `make test` nie ma celowo.** Zależał od celu `format`, który uruchamia `dotnet format`
+bez `--verify-no-changes`, więc uruchomienie testów przepisywało przy okazji ok. 30 plików,
 w tym te przeniesione żywcem z repozytorium klienta (`Utils/AsyncPollingUtils.cs`,
 `Utils/BatchSessionUtils.cs`, `Utils/KsefRateLimitWrapper.cs`). Ta rozbieżność formatowania
-istniała przed tą gałęzią — pliki dodane i zmienione tutaj przechodzą `dotnet format` bez
+jest wcześniejsza niż ta gałąź — pliki dodane i zmienione tutaj przechodzą `dotnet format` bez
 zmian. Nie została naprawiona celowo: przeformatowanie kopii z upstreamu utrudniłoby przyszłą
 synchronizację z `CIRFMF/ksef-client-csharp`.
 
-Do samego uruchomienia testów używaj więc wprost `dotnet test`, a `make test` tylko wtedy, gdy
-świadomie chcesz też przeformatować kod. Zadanie `.format_check` w `.gitlab-ci.yml` jest
-szablonem (nazwa zaczyna się od kropki), więc CI go nie uruchamia.
+Testy uruchamiaj więc wprost:
+
+```bash
+dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj
+```
 
 ### Praca z Claude Code CLI
 

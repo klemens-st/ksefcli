@@ -21,15 +21,15 @@ $(B)/format: $(SOURCES)
 	@mkdir -p $(dir $@) && touch $@
 ###############################################################################
 
-.PHONY: build format run test test-format clean sources install-hooks
+.PHONY: build format run test-format clean sources install-hooks
 build: $(B)/build
 format: $(B)/format
 sources:
 	@echo $(SOURCES)
 run: build
 	dotnet run --project $(S) --
-test: format build
-	dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj
+# No `test` target on purpose: it depended on `format`, so running the tests rewrote ~30 source
+# files as a side effect. Run dotnet test against tests/KCKSeFCli.Tests/ directly instead.
 clean:
 	dotnet clean $(S)
 	rm $(B)/build $(B)/format $(B)/init
@@ -41,13 +41,6 @@ install-hooks:
 	git config core.hooksPath .githooks
 
 ###############################################################################
-
-GITLAB_BUILD_CMD := $(shell sed -n '/.*- \(dotnet publish\)/{s//\1/;p;q}' .gitlab-ci.yml)
-build-static:
-	$(GITLAB_BUILD_CMD)
-docker-build-static:
-	docker run -ti --rm -u "$(shell id -u):$(shell id -g)" -v $(CURDIR):$(CURDIR) -w $(CURDIR) \
-		mcr.microsoft.com/dotnet/sdk:10.0 $(GITLAB_BUILD_CMD)
 
 .PHONY: nix-fix
 nix-fix:
