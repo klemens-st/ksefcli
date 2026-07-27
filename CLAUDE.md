@@ -129,6 +129,35 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
   semantic, encoded in `tests/expected_korekta.xml`. Don't "fix" it without deciding what a KOR
   invoice should state.
 
+## Known-open findings, and non-findings
+
+From the review of the hardening branch. Recorded so they are neither lost nor rediscovered.
+
+**Still open, deliberately untested** — a test would have to be written against a helper that
+does not exist yet, so write it alongside the fix:
+
+- `PobierzFaktury` filename collisions. `SafePath.SafeFileName` is many-to-one, so two invoices
+  can land on one path and the second silently overwrites the first. `SafeFileName` is right to
+  be many-to-one; the fix belongs at the call site, as a disambiguator applied when the target
+  already exists. The command itself needs the network and real invoices.
+- `Downloader`'s delete-then-move window. `File.Delete` then `File.Move` is not atomic, so a
+  failure between them loses an already-verified cached generator. Reaching it needs a
+  filesystem seam the code does not have, and the fix — `File.Move(temp, dest, overwrite: true)`
+  — removes the window rather than handling it, leaving nothing to assert on.
+
+**Retracted on investigation — do not "rediscover" these:**
+
+- That `InvoiceTotals.Bands` is missing an entry for rate 3, "the historical second reduced rate
+  pairing with `P_13_3`". There is no 3% VAT rate in Polish tax law. `TStawkaPodatku` does list
+  3 among the values `P_12` accepts, but no `P_13_x` pair is documented against it anywhere. The
+  pairing was invented; the absence of 3 from `Bands` is correct. Rates with no pair are refused
+  by design.
+- That `clitest_prod_upload_allowed_with_yes` and `clitest_test_env_upload_not_gated` are
+  vacuous because they grep a stderr-only refusal out of a stdout-only capture. The stream claim
+  is right, the conclusion is wrong: `L_unittest_cmd` merges both streams when the command is
+  prefixed with `!`, which both tests do. Sabotaging `DangerousOperation.Evaluate` to refuse
+  unconditionally makes both fail, with or without `-j`.
+
 ## Conventions
 
 - `.editorconfig` governs: 4 spaces, max line 100, K&R braces (`csharp_new_line_before_open_brace = none`).

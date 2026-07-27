@@ -206,13 +206,12 @@ clitest_dodaj_pozycje_brak_pol_sumujacych() {
     L_unittest_cmd -I ! test -e out.xml
 }
 
-# OPEN FINDING — fails against the current tree; passes once P_12 is written normalised.
+# P_12 must carry the normalised rate, not what the operator typed.
 #
 # InvoiceTotals.BandForRate deliberately tolerates a trailing "%" and surrounding space, and
-# InvoiceTotalsTests pins that. DodajPozycjeNaFakturze uses it for the band lookup but then
-# writes P_12 from the raw --stawka-vat, so "23%" totals correctly into P_13_1/P_14_1/P_15 and
-# is emitted verbatim into an element whose type (TStawkaPodatku) is a closed enumeration.
-# The file is written before validation runs, so the command leaves invalid XML on disk.
+# InvoiceTotalsTests pins that. DodajPozycjeNaFakturze used it for the band lookup but then
+# wrote P_12 from the raw --stawka-vat, so "23%" totalled correctly into P_13_1/P_14_1/P_15 and
+# was emitted verbatim into an element whose type (TStawkaPodatku) is a closed enumeration.
 clitest_dodaj_pozycje_stawka_z_procentem() {
     L_with_cd_tmpdir
     cp "$DIR"/FA_3_Przykład_1.xml test_invoice.xml
@@ -232,32 +231,34 @@ clitest_dodaj_pozycje_stawka_z_procentem() {
     L_unittest_vareq p14_1 "406.33"
 }
 
-# OPEN FINDING — the CLI intermittently loses ALL of its log output.
+# The CLI must never exit having printed nothing at all.
 #
 # Log.ConfigureLogging builds an ILoggerFactory with AddConsole, whose provider queues messages
-# onto a background writer thread. The factory is stored in a static and never disposed, and
-# Program.Main returns its exit code straight to the runtime, so whatever is still queued when
-# the process exits is discarded. The failure is all-or-nothing: the run reports exit 1 and
+# onto a background writer thread. The factory was stored in a static and never disposed, and
+# Program.Main returns its exit code straight to the runtime, so whatever was still queued when
+# the process exited was discarded. The failure is all-or-nothing: the run reports exit 1 and
 # prints nothing at all about why.
 #
 # That matters most for exactly the use this fork is hardened for. An agent that gets a bare
 # exit 1 with no message has nothing to act on, and the natural response — retry — is the wrong
 # one for a command that files invoices.
 #
-# Measured on this tree at ~6% of runs (6/100 and 5/100 sequentially, 5.5% independently on
-# another machine). Disposing the factory before Main returns takes it to 0 misses in 1530 runs.
+# Measured at ~6% of runs on an idle machine (6/100 and 5/100 sequentially, 5.5% independently
+# on another machine). The rate is NOT fixed: what is lost is a starved writer thread's queue,
+# so it climbs with load — on a busy machine it reached 67% (80/120), and once 120/120. Read a
+# high count here as the box being loaded, not as the test having changed meaning.
 #
 # The iterations run concurrently: 120 at -P8 costs ~7s, where 40 sequential runs cost ~12s.
 # The extra iterations are the point, not the speed. The per-run miss rate is indistinguishable
 # between the two modes (400 runs each way came back 30 and 30), so the count is what buys the
-# margin: across the 5.5-7.5% range measured above, N=40 leaves a false-pass rate somewhere
-# around 1-in-10 to 1-in-20, while N=120 puts it between 1-in-900 and 1-in-11,000. Ten trials
-# at N=120 had no false passes, worst case 4 misses. On the fixed binary: 0 misses in 1200
-# invocations. So the test is probabilistic in one direction only — it is not expected to go
-# red on a correct tree.
+# margin: across the 5.5-7.5% idle range, N=40 leaves a false-pass rate somewhere around
+# 1-in-10 to 1-in-20, while N=120 puts it between 1-in-900 and 1-in-11,000 — and load only
+# pushes that further down. Against the fixed binary: 0 misses in 600 invocations, half of them
+# at four times oversubscription, plus 10 clean runs of this test. So it is probabilistic in
+# one direction only — it is not expected to go red on a correct tree.
 #
-# It is also the true cause of the intermittent failures seen in this suite, which land on
-# whichever Log-dependent test happens to lose the race. It is NOT xUnit test parallelism: the
+# It was also the true cause of the intermittent failures seen in this suite, which landed on
+# whichever Log-dependent test happened to lose the race. It is NOT xUnit test parallelism: the
 # bash suite is a separate process and shares no state with the xUnit run.
 clitest_log_nie_gubi_komunikatow() {
     L_with_cd_tmpdir
@@ -274,11 +275,10 @@ clitest_log_nie_gubi_komunikatow() {
     L_unittest_vareq puste "0"
 }
 
-# DodajPozycjeNaFakturze writes the output file and validates it afterwards
-# (DodajPozycjeNaFakturzeCommand.cs:115 then :118), so every validation failure leaves invalid
-# XML on disk and still reports failure. WystawKorekte does the reverse — validate, return 1,
-# then write — and that is the order the repo should be consistent about, because the output of
-# a failed run is what an agent picks up and files next.
+# DodajPozycjeNaFakturze used to write the output file and validate it afterwards, so every
+# validation failure left invalid XML on disk and still reported failure. WystawKorekte does it
+# the other way — validate, return 1, then write — and that is the order the repo is consistent
+# about, because the output of a failed run is what an agent picks up and files next.
 #
 # P_7 is TZnakowy512, so an over-long name fails validation without needing the network and
 # without depending on the separate P_12 finding.
@@ -295,10 +295,10 @@ clitest_dodaj_pozycje_nie_zapisuje_niepoprawnego_xml() {
     L_unittest_success test ! -e out.xml
 }
 
-# OPEN FINDING — fails against the current tree; passes once the HelpText stops offering 0.
+# --help must not offer a rate the command refuses.
 #
 # 0% has no P_13_x/P_14_x pair, so the command refuses it (clitest_dodaj_pozycje_stawka_
-# nieobslugiwana pins the refusal). Advertising it in --help sends the operator straight into
+# nieobslugiwana pins the refusal). Advertising it in --help sent the operator straight into
 # that refusal. The repo convention also asks for Polish HelpText on any option touched.
 clitest_dodaj_pozycje_help_nie_obiecuje_stawki_zero() {
     local output
@@ -342,16 +342,16 @@ clitest_nowa_faktura_stawka_ryczalt() {
     L_unittest_vareq p15 "1334.00"
 }
 
-# OPEN FINDING — fails against the current tree; passes once a negative band is still emitted.
+# A band a rabat drives negative must still be emitted.
 #
-# GenerateXml skips P_13_x/P_14_x for any merged band whose net is <= 0, but totalGross is
+# GenerateXml skipped P_13_x/P_14_x for any merged band whose net was <= 0, but totalGross is
 # accumulated from every position unconditionally. A rabat that drives one band negative
-# therefore vanishes from the summary while still moving P_15. In this fixture the 23% band
-# nets to -500.00 + -115.00 VAT and is dropped, leaving components that sum to 105.00 against
+# therefore vanished from the summary while still moving P_15. In this fixture the 23% band
+# nets to -500.00 + -115.00 VAT and was dropped, leaving components that sum to 105.00 against
 # a stated P_15 of -510.00. XSD validation passes either way — it does not check the totals.
 #
-# A band that nets to exactly zero is harmless (it contributes nothing to either side), so the
-# guard wants to be < 0, not <= 0 — or to go away entirely.
+# A band that is zero on both sides is harmless (it contributes nothing either way), so the
+# guard tests for that rather than for a sign.
 clitest_nowa_faktura_rabat_ujemne_pasmo() {
     L_with_cd_tmpdir
     L_unittest_cmd cli NowaFaktura "$DIR"/test_invoice_rabat.yaml out.xml
@@ -482,17 +482,17 @@ clitest_test_env_upload_not_gated() {
     L_unittest_cmd -I ! grep -q "Odmowa" <<<"$output"
 }
 
-# OPEN FINDING — fails against the current tree; passes once --retry-attempts is bounded.
+# --retry-attempts must be bounded, and rejected before anything happens.
 #
-# --retry-attempts is a plain int with no lower bound on both PrzeslijFaktury and SzukajFaktur
-# (PobierzFaktury inherits the latter). ExecuteWithRetryAsync loops `for (attempt = 1; attempt
-# <= maxRetryAttempts; ...)`, so at 0 the body never runs and it falls through to
+# --retry-attempts had no lower bound on either PrzeslijFaktury or SzukajFaktur (PobierzFaktury
+# inherits the latter). ExecuteWithRetryAsync loops `for (attempt = 1; attempt <=
+# maxRetryAttempts; ...)`, so at 0 the body never ran and it fell through to
 # `throw new InvalidOperationException("Nieoczekiwane zakończenie pętli powtórzeń dla ...")`,
 # which Program.cs reports as exit 3 with a stack trace and no mention of the flag at fault.
 #
-# Note this test currently attempts authentication before getting anywhere near the retry loop,
-# so until it is fixed it makes a network call. The fix is to reject the value at parse time,
-# which is also what makes this test offline: it must fail before any authentication happens.
+# The value is now rejected by IGlobalCommand.ValidateOptions, ahead of the config file, the DI
+# container and authentication. That is what keeps this test offline: it has to fail before any
+# authentication happens, so a run that starts reaching the network is itself a regression.
 clitest_retry_attempts_zero_odrzucone() {
     local output
     KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \

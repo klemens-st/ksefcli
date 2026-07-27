@@ -185,4 +185,61 @@ public class InvoiceTotalsTests {
         // 3 x 33.333 is 99.999, which must not carry a third decimal into the invoice.
         Assert.Equal(100.00m, InvoiceTotals.LineNet(quantity: 3m, unitPrice: 33.333m));
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Summarize used to key bands by percent rather than by field pair.
+    //
+    // FA(3) gives 23% and 22% the same P_13_1/P_14_1 pair (likewise 8% and 7% share P_13_2),
+    // so an input carrying both rates of a pair yielded two BandTotals aimed at the same
+    // element. WystawKorekteCommand.RecalculateTotals then assigned netField.Value twice and
+    // the second write won, while P_15 still counted both lines — the invoice did not add up.
+    //
+    // Polish VAT law makes this unreachable through the tool's own commands: 22% is the base
+    // rate and 23% the (long-)raised base rate, so no lawful invoice carries both, and
+    // WystawKorekte only edits quantities and amounts — it cannot introduce a second rate.
+    // What it protects is WystawKorekte reading arbitrary XML it did not author, where the
+    // right answer is computable and silently wrong totals are the alternative.
+    //
+    // The assertion below is deliberately about the *shape of the result*: two totals must
+    // never target one element.
+    // ---------------------------------------------------------------------------------------
+    [Theory]
+    // Stawka podstawowa: 22% and 23% both map to P_13_1/P_14_1.
+    [InlineData("23", "22")]
+    // Stawka obniżona pierwsza: 7% and 8% both map to P_13_2/P_14_2.
+    [InlineData("8", "7")]
+    public void SummarizeNeverReturnsTwoTotalsForTheSameFieldPair(string first, string second) {
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize([
+            (first, 100.00m),
+            (second, 100.00m),
+        ]);
+
+        List<string> netFields = summary.Bands.Select(b => b.Band.NetField).ToList();
+
+        Assert.Equal(netFields.Count, netFields.Distinct().Count());
+    }
+
+    // The same defect stated as arithmetic, so the merge above cannot be satisfied by dropping
+    // a band or by recomputing VAT from the merged net. Whatever Summarize reports has to
+    // reconcile with the net it was given, and the VAT has to stay what the individual rates
+    // actually produce. This test passed before the fix as well as after it: it constrains the
+    // fix rather than the defect, and it is the one that fails if the merge ever starts
+    // deriving VAT from a single percent.
+    [Fact]
+    public void SummarizeAccountsForEveryNetItWasGivenWhenRatesShareAFieldPair() {
+        InvoiceTotals.Summary summary = InvoiceTotals.Summarize([
+            ("23", 100.00m),
+            ("22", 100.00m),
+        ]);
+
+        // Nothing here is an unsupported rate, so all 200.00 has to be inside the bands.
+        Assert.Empty(summary.UnsupportedRates);
+        Assert.Equal(200.00m, summary.Bands.Sum(b => b.Net));
+        Assert.Equal(200.00m, summary.TotalNet);
+
+        // 23.00 + 22.00. A merge that recomputes VAT from the merged net against one percent
+        // gives 46.00 or 44.00 — passing the field-pair test above by breaking the money.
+        Assert.Equal(45.00m, summary.Bands.Sum(b => b.Vat));
+        Assert.Equal(45.00m, summary.TotalVat);
+    }
 }
