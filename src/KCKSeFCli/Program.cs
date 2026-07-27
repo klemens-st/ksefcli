@@ -60,35 +60,47 @@ public class Program {
         };
 
         try {
-            return await result.MapResult(
-                (IGlobalCommand cmd) => {
-                    cmd.ConfigureLogging();
-                    // Before the config file, the DI container and authentication: a bad option
-                    // value must be an ordinary exit 1 with a message naming the option, not a
-                    // failure discovered halfway through a run that has already hit the network.
-                    string? optionError = cmd.ValidateOptions();
-                    if (optionError is not null) {
-                        Log.Error(optionError);
+            // Zagnieżdżone try/finally, a nie finally na zewnętrznym try: kolejka logów musi
+            // zostać opróżniona ZANIM zadziała którykolwiek catch poniżej. Te wypisują przez
+            // Console.Error, który nie jest buforowany, więc opróżnianie po nich wypisałoby
+            // ślad stosu przed komunikatami, które do niego doprowadziły.
+            //
+            // Samo finally jest tu po to, żeby żadna z pięciu ścieżek return nie mogła go
+            // ominąć, a przyszła szósta również nie.
+            try {
+                return await result.MapResult(
+                    (IGlobalCommand cmd) => {
+                        cmd.ConfigureLogging();
+                        // Before the config file, the DI container and authentication: a bad
+                        // option value must be an ordinary exit 1 with a message naming the
+                        // option, not a failure discovered halfway through a run that has
+                        // already hit the network.
+                        string? optionError = cmd.ValidateOptions();
+                        if (optionError is not null) {
+                            Log.Error(optionError);
+                            return Task.FromResult(1);
+                        }
+                        return cmd.ExecuteAsync(cts.Token);
+                    },
+                    errs => {
+                        HelpText helpText = HelpText.AutoBuild(result, h => {
+                            h.Copyright = "Copyright (C) 2026 Kamil Cukrowski. Source code lisenced under GPLv3.";
+                            // new CopyrightInfo("Kamil Cukrowski", 2026);
+                            h.AdditionalNewLineAfterOption = false;
+                            return h;
+                        });
+                        Console.WriteLine(helpText);
+
+                        if (errs.Any(e => e is HelpRequestedError or HelpVerbRequestedError or VersionRequestedError)) {
+                            return Task.FromResult(0);
+                        }
+
                         return Task.FromResult(1);
                     }
-                    return cmd.ExecuteAsync(cts.Token);
-                },
-                errs => {
-                    HelpText helpText = HelpText.AutoBuild(result, h => {
-                        h.Copyright = "Copyright (C) 2026 Kamil Cukrowski. Source code lisenced under GPLv3.";
-                        // new CopyrightInfo("Kamil Cukrowski", 2026);
-                        h.AdditionalNewLineAfterOption = false;
-                        return h;
-                    });
-                    Console.WriteLine(helpText);
-
-                    if (errs.Any(e => e is HelpRequestedError or HelpVerbRequestedError or VersionRequestedError)) {
-                        return Task.FromResult(0);
-                    }
-
-                    return Task.FromResult(1);
-                }
-            ).ConfigureAwait(false);
+                ).ConfigureAwait(false);
+            } finally {
+                Log.Flush();
+            }
         } catch (KCKSeFCli.Utils.OperationRefusedException ex) {
             // A declined or unauthorised operation is an ordinary failure, not a crash. Exit 3
             // is reserved for unhandled exceptions, and a stack trace would bury the message.
