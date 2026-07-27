@@ -61,4 +61,5 @@ Zmiany warte zgłoszenia niezależnie od reszty, bo to zwykłe błędy:
 - `dotnet run --project src/KCKSeFCli -- <polecenie>` z README nigdy nie działał: projekt ma
   wiele wersji docelowych, więc konieczne jest `-f net10.0` (commit `8b6bfd1`).
 - `.format_check` w `.gitlab-ci.yml` nigdy się nie uruchamia — kropka na początku nazwy czyni
-  z niego szablon zadania, nie zadanie.
+  z niego szablon zadania, nie zadanie. (Ten fork usunął `.gitlab-ci.yml` w całości, bo korzysta
+  wyłącznie z GitHub Actions; uwaga dotyczy pliku w repozytorium oryginalnym.)

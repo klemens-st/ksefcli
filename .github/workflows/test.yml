@@ -22,7 +22,7 @@ on:
         # (CLAUDE.md gotcha 5):
         #   ' ! clitest_pobierz_info_o_nip && ! clitest_nowa_faktura_nip_lookup '
         # !, &&, ||, ( and ) are operators and every other token is a regex. Alternation
-        # inside one token silently matches nothing (gotcha 8), so the operators are the only
+        # inside one token silently matches nothing (gotcha 7), so the operators are the only
         # way to combine names.
         type: string
         default: ''
@@ -110,7 +110,7 @@ jobs:
 
       # The net6.0 gate. Publish is -f net10.0 only, so a .NET 7+/8+ API breaks net6.0
       # silently -- twice already, once for 8 commits. Only a whole-solution build catches it
-      # (CLAUDE.md gotcha 1), and the GitLab pipeline never ran one.
+      # (CLAUDE.md gotcha 1), and the GitLab pipeline this fork inherited never ran one.
       - name: Build the whole solution (net6.0 + net10.0)
         run: dotnet build kcksefcli.slnx -c Release --no-restore
 

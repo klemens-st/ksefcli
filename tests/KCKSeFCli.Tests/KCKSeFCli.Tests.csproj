@@ -3,7 +3,7 @@
   <PropertyGroup>
     <!--
       Single-target net10.0. The app multi-targets net6.0;net10.0, but the net6.0 leg exists
-      only for the Windows x86 build, and .gitlab-ci.yml builds Linux with -f net10.0.
+      only for the Windows x86 build; everything Linux is published with -f net10.0.
     -->
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

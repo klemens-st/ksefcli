@@ -74,17 +74,13 @@ the top of that test (`help`, `version`, `TestSkiaSharp`; `Configuration`,
    ODPOWIEDZIALNOŚCIĄ` at `LITERACKA 21/24, 01-864 WARSZAWA`, so a change in that company's
    registered details breaks the test without anything being wrong here. Check the API response
    before hunting for a bug in our code.
-6. **`.format_check` in `.gitlab-ci.yml` never runs** — leading dot makes it a template job.
-   What does run: `dotnet test`, then publish, then `unit.sh` against the published binary, then
-   the same `unit.sh` plus `ci.sh` again in a `wolfi-base` image provisioned by
-   `tests/setup-wolfie.sh` (that `apk add coreutils` is what supplies `sha256sum` — see gotcha 7).
-   `.build` is also dot-prefixed, but legitimately: jobs `extends:` it. `.format_check` is
-   extended by nothing.
-7. `tests/L_lib.sh` is downloaded at test time and gitignored. Don't commit it. It is verified
+6. `tests/L_lib.sh` is downloaded at test time and gitignored. Don't commit it. It is verified
    against a SHA-256 pin before sourcing, so `sha256sum` is now required to run the CLI suite.
-8. **`-k` in `tests/unit.sh` takes one regex, not an alternation** — `-k 'a|b'` matches nothing
+   In a `wolfi-base` container that binary comes from `tests/setup-wolfie.sh`'s `apk add
+   coreutils`.
+7. **`-k` in `tests/unit.sh` takes one regex, not an alternation** — `-k 'a|b'` matches nothing
    and reports "No tests matched" rather than erroring.
-9. **A verb listed twice in `commandTypes` compiles, parses and runs** — but `help <verb>`
+8. **A verb listed twice in `commandTypes` compiles, parses and runs** — but `help <verb>`
    dies with an unhandled `InvalidOperationException` ("Sequence contains more than one
    matching element"), because `CommandLine` resolves a help verb with `SingleOrDefault`.
    The verb also appears twice in `--help`. `TestTokenAuth` was duplicated for 8 commits.
@@ -336,12 +332,12 @@ remote, `upstream` = `https://gitlab.com/kamcuk/kcksefcli.git`, so `git fetch` k
 - **`<Version>` is not set anywhere** in `KCKSeFCli.csproj` — the `*` on `SkiaSharp.NativeAssets.Linux`
   is a package wildcard, not the assembly version. A tag alone will not reach the binary; wire a
   `VersionPrefix` first if `--version` is supposed to mean something.
-- Inherited GitLab release plumbing keys on the **default branch name**, not on tags:
-  `.release_main_expire_never` fires on `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`, and the
-  download URLs in `README.md` hardcode `/main/` in the artifact paths. **None of the GitLab
-  release plumbing runs on the GitHub fork** — `.github/workflows` now holds a test workflow
-  only, so those README download URLs still point at GitLab artifacts that this fork does not
-  produce.
+- **This fork has no release plumbing at all.** The inherited GitLab pipeline that built the
+  Linux and Windows artifacts was deleted along with `.gitlab-ci.yml`, and `.github/workflows`
+  holds a test workflow only. The download URLs in `README.md` still point at
+  `gitlab.com/kamcuk/kcksefcli` — that is **upstream's** project, so they serve upstream's
+  binaries without this fork's hardening. Publishing anything from here means writing the
+  build-and-publish workflow first.
 
 ## CI (GitHub Actions)
 
@@ -354,7 +350,7 @@ run cancel each other's gate.
 
 - The gate runs `dotnet restore` → **whole-solution `dotnet build -c Release`** → `dotnet test`
   → `publish -r linux-x64 -f net10.0` → `tests/unit.sh`. The solution build is the only step
-  that compiles `net6.0` (gotcha 1) and is the one thing `.gitlab-ci.yml` never did.
+  that compiles `net6.0` (gotcha 1), and is the one thing the deleted GitLab pipeline never did.
 - **`test.yml` declares no `secrets:` block on purpose.** That is what structurally prevents it
   from ever growing into running `integration.sh`/`ci.sh`, which file real invoices.
 - The `unit-filter` input is the escape hatch for the two live-registry tests (gotcha 5) —
@@ -367,7 +363,7 @@ run cancel each other's gate.
   `SkiaSharp.NativeAssets.Linux`, so the shipped asset is `...NoDependencies`, whose
   `libSkiaSharp.so` links only libc/libm/libdl/libpthread. `setup-wolfie.sh`'s fontconfig
   install is a wolfi-base concern only.
-- No `dotnet format --verify-no-changes`, for the same reason `.format_check` is a dot-prefixed
-  template on GitLab (gotcha 2 and 6): it would be red on an untouched tree.
+- No `dotnet format --verify-no-changes`, for the same reason the inherited GitLab pipeline
+  never ran one (gotcha 2): it would be red on an untouched tree.
 - The check-run name is `test / build-and-test` (`<caller job id> / <called job name>`).
   Renaming either job silently orphans any required status check configured on `main`.
