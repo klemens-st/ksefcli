@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Conventional Commits gate. The fork era of this repo is 100% conventional by habit alone,
+# and the habit has already slipped once (e5e0e45 "Initialize Claude settings"). Message
+# quality is load-bearing here: commits are kept small and separable so they can be
+# cherry-picked onto an upstream GitLab MR, and a cherry-pick carries its message with it.
+#
+# Installed by `make install-hooks`, which sets core.hooksPath -- that config key is not
+# versioned, so a fresh clone has no hook until someone runs it. .claude/hooks/commit-msg-guard.py
+# calls this same script from a Claude Code PreToolUse hook; the rules live here only.
+#
+# Pure bash on purpose: no jq, no python. It has to run on a bare dev machine and inside the
+# wolfi-base container that tests/setup-wolfie.sh provisions.
+set -euo pipefail
+
+readonly TYPES='feat|fix|docs|test|refactor|ci|chore|revert|perf|build|style'
+readonly MAX_HEADER=72
+
+# Messages git itself generates or that address an earlier commit rather than describing a
+# change. Merge is non-negotiable: GitHub writes "Merge pull request #N from ..." on every PR
+# merge and three are already in history.
+readonly EXEMPT='^(Merge |Revert "|Reapply |fixup! |squash! |amend! )'
+
+usage() {
+    echo "usage: ${0##*/} <commit-message-file>" >&2
+    exit 2
+}
+
+[[ $# -eq 1 ]] || usage
+[[ -f $1 ]] || { echo "${0##*/}: no such file: $1" >&2; exit 2; }
+
+# The header is the first line that is neither blank nor a git comment. git strips '#' lines
+# before committing, so the hook must skip them too or it would lint the "# Please enter the
+# commit message" boilerplate of an editor commit.
+header=$(grep -v -e '^#' -e '^[[:space:]]*$' -- "$1" | head -n 1 || true)
+# Strip a trailing CR so a message file written on Windows is not rejected for an invisible
+# character.
+header=${header%$'\r'}
+
+reject() {
+    cat >&2 <<EOF
+commit rejected: $1
+
+  $header
+
+This repository uses Conventional Commits:
+
+  <type>[(<scope>)][!]: <subject>
+
+  type     one of: ${TYPES//|/, }
+  scope    optional, lowercase, e.g. (security), (rate-limit), (totals)
+  !        optional, marks a breaking change
+  subject  imperative, lowercase, no trailing period
+  header   at most $MAX_HEADER characters
+
+Examples from this repository:
+
+  fix(security): pin System.Security.Cryptography.Xml to 10.0.10
+  feat(safety): gate production uploads behind an explicit confirmation
+  docs(totals): explain the per-rate net/VAT field pairs
+
+Merge, revert and fixup!/squash! messages are exempt.
+EOF
+    exit 1
+}
+
+[[ -n $header ]] && [[ ! $header =~ $EXEMPT ]] || exit 0
+
+# Anchored so a conforming prefix cannot smuggle in a non-conforming rest of the header.
+[[ $header =~ ^($TYPES)(\([a-z0-9][a-z0-9._-]*\))?!?:\ .+$ ]] ||
+    reject "header does not match <type>[(<scope>)][!]: <subject>"
+
+[[ ${#header} -le $MAX_HEADER ]] ||
+    reject "header is ${#header} characters, over the $MAX_HEADER-character limit"
+
+[[ $header != *. ]] ||
+    reject "subject ends with a period"
+
+# A subject that is only whitespace satisfies the `.+` above.
+[[ ${header#*: } =~ [^[:space:]] ]] ||
+    reject "subject is empty"

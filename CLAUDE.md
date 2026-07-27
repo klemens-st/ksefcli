@@ -272,6 +272,47 @@ does not exist yet, so write it alongside the fix:
   `ConfigureLogging` and `ExecuteAsync` — ahead of the config file, DI and authentication, so a
   bad value fails offline. `CommandLineParser` cannot bound a numeric option itself.
 - Commits stay small and separable so upstreaming to the GitLab original remains cheap.
+- **Commit messages are Conventional Commits, enforced.** `<type>[(<scope>)][!]: <subject>`,
+  type from `feat fix docs test refactor ci chore revert perf build style`, lowercase scope,
+  header ≤ 72 chars, no trailing period. `Merge`/`Revert "`/`Reapply `/`fixup! `/`squash! `
+  are exempt — GitHub writes the merge ones itself. See [Commit hooks](#commit-hooks).
+
+## Commit hooks
+
+`.githooks/commit-msg` is the **single source of truth** for the message rule — pure bash, no
+jq or python, so it runs in the `wolfi-base` container too. Two things call it, and neither
+duplicates the rules:
+
+- **git**, via `core.hooksPath`. That key is local config and **not versioned**, so a fresh
+  clone has no hook until `make install-hooks` runs. Worktrees share `.git/config`, so one
+  install covers all of them.
+- **Claude Code**, via the `PreToolUse`/`Bash` hook in `.claude/settings.json`, which runs
+  `.claude/hooks/commit-msg-guard.py`. That script shell-splits the command, finds the tokens
+  after the `commit` verb, digs out `-m`/`--message` (including the
+  `-m "$(cat <<'EOF' … EOF)"` form) and feeds them to the same validator.
+
+Both exist because each covers the other's blind spot: the git hook is bypassed by
+`git commit --no-verify` (which the Claude hook refuses outright) and is absent until
+installed; the Claude hook only sees commits made through the Bash tool.
+
+- **The guard fails open on purpose.** Anything it cannot confidently parse — `-F`, `-C`,
+  `--amend --no-edit`, an editor commit, unbalanced quotes — is allowed through, because the
+  git hook is the authority and a false deny is worse than a miss.
+- It decides **only from tokens after `commit`**, never from the raw string. Scanning the
+  whole command would reject `grep -n x && git commit -m 'fix: y'` over an unrelated `-n`,
+  and would mistake an unrelated heredoc's body for the message.
+- The `PreToolUse` entry carries **no `if:` filter**; a `case` prefilter in the hook command
+  does the same job for ~4 ms instead of the ~44 ms of an unconditional python spawn. The
+  filter was dropped because `if: "Bash(git commit*)"` is a prefix rule whose behaviour on a
+  compound `git add -A && git commit …` could not be confirmed, and a filter that silently
+  fails to match means no enforcement at all.
+- `.claude/settings.json` is watched only for directories that had a settings file when the
+  session started, so **a hook edited inside a worktree does not go live mid-session**. Verify
+  it by piping a synthetic payload to the command instead:
+  `echo '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"x\""}}' |
+  .claude/hooks/commit-msg-guard.py`.
+- `clitest_commit_msg_lint` in `tests/unit.sh` pins the accept and reject sets. It needs no
+  CLI binary, so `./tests/unit.sh -k commit_msg_lint /bin/true` runs it on its own.
 
 ## Branches
 

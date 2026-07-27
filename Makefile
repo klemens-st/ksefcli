@@ -21,7 +21,7 @@ $(B)/format: $(SOURCES)
 	@mkdir -p $(dir $@) && touch $@
 ###############################################################################
 
-.PHONY: build format run test clean sources
+.PHONY: build format run test test-format clean sources install-hooks
 build: $(B)/build
 format: $(B)/format
 sources:
@@ -35,6 +35,10 @@ clean:
 	rm $(B)/build $(B)/format $(B)/init
 test-format:
 	dotnet format $(S) -v d --verify-no-changes
+# core.hooksPath is local config, not versioned, so a fresh clone has no commit-msg hook until
+# this runs. Worktrees share .git/config, so one install covers all of them.
+install-hooks:
+	git config core.hooksPath .githooks
 
 ###############################################################################
 
