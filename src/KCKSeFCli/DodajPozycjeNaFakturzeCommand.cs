@@ -112,9 +112,9 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
         doc = MyXml.Normalize(doc);
         string newXml = MyXml.XmlToString(doc);
 
-        File.WriteAllText(outputPath, newXml);
-        Log.Information($"Successfully added item and saved to: {outputPath}");
-
+        // Walidacja przed zapisem, tak jak w WystawKorekte. Odwrotna kolejność zostawiała po
+        // nieudanym przebiegu niepoprawny XML na dysku — a to właśnie ten plik podnosi kolejny
+        // krok i wysyła dalej. Przy --bez-walidacji zapis jest jedyną rzeczą, jaka się dzieje.
         if (!BezWalidacji) {
             if (XmlValidator.Validate(newXml, out List<string>? errors)) {
                 Log.Information("Post-modification validation successful.");
@@ -126,6 +126,9 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
                 return 1;
             }
         }
+
+        File.WriteAllText(outputPath, newXml);
+        Log.Information($"Successfully added item and saved to: {outputPath}");
 
         return 0;
     }
