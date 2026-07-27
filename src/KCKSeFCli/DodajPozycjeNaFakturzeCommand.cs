@@ -84,7 +84,10 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
             new XElement(ns + "P_8B", Ilosc.ToString("F2", CultureInfo.InvariantCulture)),
             new XElement(ns + "P_9A", CenaNetto.ToString("F2", CultureInfo.InvariantCulture)),
             new XElement(ns + "P_11", InvoiceTotals.Format(wartoscNetto)),
-            new XElement(ns + "P_12", StawkaVat)
+            // Stawka znormalizowana, nie to, co wpisał operator. BandForRate celowo przyjmuje
+            // "23%" i spacje wokół, ale P_12 ma typ TStawkaPodatku — zamkniętą listę wartości,
+            // przez którą "23%" nie przechodzi.
+            new XElement(ns + "P_12", band.Value.Percent.ToString(CultureInfo.InvariantCulture))
         );
 
         // Each rate band has its own net/VAT pair, so a 5% item updates P_13_3/P_14_3 rather
@@ -96,7 +99,7 @@ public class DodajPozycjeNaFakturzeCommand : IGlobalCommand {
         List<string> missing = required.Where(f => fa.Element(ns + f) is null).ToList();
         if (missing.Count > 0) {
             Log.Error($"Błąd: faktura nie zawiera pól sumujących {string.Join(", ", missing)}, "
-                      + $"wymaganych dla stawki {StawkaVat}%. Dodanie pozycji rozjechałoby sumy. "
+                      + $"wymaganych dla stawki {band.Value.Percent}%. Dodanie pozycji rozjechałoby sumy. "
                       + "Uzupełnij te pola w fakturze wejściowej.");
             return 1;
         }
