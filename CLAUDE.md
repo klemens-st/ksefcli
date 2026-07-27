@@ -19,9 +19,9 @@ Needs network to `api.nuget.org` and `github.com`.
 
 ```bash
 dotnet build                                                   # WHOLE solution — see gotcha 1
-dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 205 tests
+dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 211 tests
 dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
-./tests/unit.sh ./dist/kcksefcli                                # 51 CLI tests (publish first)
+./tests/unit.sh ./dist/kcksefcli                                # 57 CLI tests (publish first)
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
@@ -30,7 +30,8 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 1. **Always `dotnet build` the whole solution before committing.** Project multi-targets
    `net6.0;net10.0`. Building `-f net10.0` only hid a `net6.0` break for 8 commits
    (`SHA256.HashData(Stream)` is .NET 7+; .NET 6 has only the `byte[]` overload). Publish is
-   `-f net10.0`; build is not.
+   `-f net10.0`; build is not. Recurred with `ArgumentOutOfRangeException.ThrowIfNegativeOrZero`
+   (.NET 8+) — check any convenience overload's availability before using it.
 2. **`make test` rewrites ~30 files** — it runs `dotnet format` without `--verify-no-changes`.
    Use `dotnet test` directly. The drift is pre-existing, mostly in verbatim copies of upstream
    client helpers (`Utils/AsyncPollingUtils.cs`, `BatchSessionUtils.cs`, `KsefRateLimitWrapper.cs`);
@@ -76,7 +77,9 @@ dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
   leaves the machine.
 - When a test claims to pin a bug fix, **run it against the pre-fix binary** and confirm it
   fails there. Two of this repo's fixes had first-draft tests that passed either way.
-  `git stash push <file> && dotnet publish … -o dist_old && ./tests/unit.sh ./dist_old/kcksefcli`
+  **Commit first, then** `git checkout <pre-fix-sha> -- src/ && dotnet publish … -o dist_old &&
+  git checkout HEAD -- src/`. That silently discards uncommitted `src/` changes. Avoid
+  `git stash`: the stack is shared with every other worktree and concurrent session.
 
 ## Security invariants — do not undo
 
@@ -109,6 +112,14 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
   rate-limited API).
 - Platform-gated APIs need `[UnsupportedOSPlatformGuard("windows")]` on the guard property, or
   CA1416 fails the build; a plain `bool` property is not enough for the analyzer.
+- `Log.Flush()` runs in a `finally` **nested inside** `Program.Main`'s `try`, so it precedes the
+  `catch` handlers — those use unbuffered `Console.Error`, so flushing after them prints a stack
+  trace ahead of the log lines leading to it. `ConfigureLogging` disposes the previous factory
+  (commands configure twice). Without both, the CLI intermittently exits printing **nothing**;
+  the rate scales with machine load (~6% idle, 67% loaded).
+- `InvoiceTotals.Summarize` keys bands by **field pair, not percent**, and sums VAT computed per
+  rate. Keying by percent aimed two totals at one element; deriving VAT from the merged net
+  turns 45.00 into 46.00.
 
 ## Money math
 
@@ -128,6 +139,9 @@ Each was a real defect with a regression test; "cleaning up" any of these reintr
   band holds the **difference** while untouched lines keep their full value. Pre-existing
   semantic, encoded in `tests/expected_korekta.xml`. Don't "fix" it without deciding what a KOR
   invoice should state.
+- `NowaFakturaCommand` keeps its own inline band merge on purpose: it derives VAT as
+  `brutto - net` so net + VAT equals the gross exactly. Routing it through `VatFor` changes the
+  numbers. It is not dead duplication of `Summarize`.
 
 ## Known-open findings, and non-findings
 
@@ -167,4 +181,7 @@ does not exist yet, so write it alongside the fix:
   don't copy a neighbour, write Polish.
 - Exit codes: `0` ok, `1` failure, `2` partial success (`PrzeslijFaktury` — some invoices filed,
   so a blind retry duplicates them), `3` unhandled exception.
+- Option range checks go in `IGlobalCommand.ValidateOptions()`, which `Program.cs` calls between
+  `ConfigureLogging` and `ExecuteAsync` — ahead of the config file, DI and authentication, so a
+  bad value fails offline. `CommandLineParser` cannot bound a numeric option itself.
 - Commits stay small and separable so upstreaming to the GitLab original remains cheap.
