@@ -20,6 +20,10 @@ public class SzukajFakturCommand : IWithConfigCommand {
     [Option("retry-attempts", Default = 5, HelpText = "Liczba ponownych prób po przekroczeniu limitu zapytań (HTTP 429).")]
     public int RetryAttempts { get; set; }
 
+    // Odziedziczone przez PobierzFaktury razem z samą opcją.
+    public override string? ValidateOptions() =>
+        KsefRateLimitWrapper.ValidateRetryAttempts(RetryAttempts);
+
     [Option("no-local-rate-limit", HelpText = "Wyłącz lokalne ograniczanie liczby zapytań do API.")]
     public bool NoLocalRateLimit { get; set; }
 

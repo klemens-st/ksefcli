@@ -52,5 +52,15 @@ public abstract class IGlobalCommand {
 
     public void ConfigureLogging() => Log.ConfigureLogging(Verbose, Quiet);
 
+    /// <summary>
+    /// Sprawdzenie zakresów opcji, wykonywane zanim polecenie cokolwiek zrobi. Zwraca komunikat
+    /// o błędzie albo <c>null</c>, jeśli opcje są poprawne.
+    ///
+    /// Program wywołuje to przed konfiguracją, kontenerem DI i uwierzytelnieniem, więc zła
+    /// wartość opcji jest odrzucana bez żadnego zapytania do sieci. CommandLineParser nie
+    /// potrafi sam narzucić dolnego ograniczenia na opcję liczbową.
+    /// </summary>
+    public virtual string? ValidateOptions() => null;
+
     public abstract Task<int> ExecuteAsync(CancellationToken cancellationToken);
 }

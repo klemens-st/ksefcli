@@ -17,6 +17,17 @@ public static class KsefRateLimitWrapper
     private const int DefaultMaxRetryAttempts = 5;
 
     /// <summary>
+    /// Komunikat dla operatora, jeśli --retry-attempts jest poza zakresem; <c>null</c>, gdy
+    /// wartość jest poprawna. Ta sama granica co w <see cref="ExecuteWithRetryAsync{T}"/>, tylko
+    /// zgłoszona zanim polecenie cokolwiek zrobi — wyjątek z wnętrza wrappera trafiłby do
+    /// operatora dopiero po uwierzytelnieniu i jako nieobsłużony błąd.
+    /// </summary>
+    public static string? ValidateRetryAttempts(int value) =>
+        value < 1
+            ? $"Błąd: --retry-attempts musi być liczbą większą od zera (podano {value})."
+            : null;
+
+    /// <summary>
     /// Wykonuje wywołanie KSeF API z automatyczną obsługą rate limiting.
     /// Automatycznie ponawiaj próby po HTTP 429 zgodnie z Retry-After header.
     /// </summary>
@@ -36,6 +47,19 @@ public static class KsefRateLimitWrapper
         string? accessToken = null,
         CancellationToken cancellationToken = default)
     {
+        // Pętla poniżej biegnie od 1 do maxRetryAttempts włącznie, więc przy wartości < 1 jej
+        // ciało nigdy się nie wykona i sterowanie spadnie na końcowy InvalidOperationException.
+        // To zwykły błąd argumentu, a nie awaria — zgłaszamy go jako błąd argumentu.
+        // ArgumentOutOfRangeException.ThrowIfNegativeOrZero jest dostępne dopiero od .NET 8,
+        // a projekt buduje się także dla net6.0.
+        if (maxRetryAttempts < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRetryAttempts),
+                maxRetryAttempts,
+                "Liczba prób musi być większa od zera.");
+        }
+
         // Odczyt profilu limitów danego endpointu (RPS/RPM/RPH)
         ApiLimits limits = await ResolveApiLimitsAsync(endpoint, limitsClient, accessToken, cancellationToken).ConfigureAwait(false);
 

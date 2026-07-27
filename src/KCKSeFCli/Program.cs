@@ -63,6 +63,14 @@ public class Program {
             return await result.MapResult(
                 (IGlobalCommand cmd) => {
                     cmd.ConfigureLogging();
+                    // Before the config file, the DI container and authentication: a bad option
+                    // value must be an ordinary exit 1 with a message naming the option, not a
+                    // failure discovered halfway through a run that has already hit the network.
+                    string? optionError = cmd.ValidateOptions();
+                    if (optionError is not null) {
+                        Log.Error(optionError);
+                        return Task.FromResult(1);
+                    }
                     return cmd.ExecuteAsync(cts.Token);
                 },
                 errs => {
