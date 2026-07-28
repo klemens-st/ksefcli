@@ -51,6 +51,10 @@ the top of that test (`help`, `version`, `TestSkiaSharp`; `Configuration`,
 
 ## Gotchas
 
+**The numbers are cross-referenced.** `.github/workflows/test.yml` cites gotchas 1, 5 and 7;
+this file cites 1, 2 and 5. Inserting or deleting an item silently repoints every one of them.
+`grep -rn 'gotcha [0-9]'` after any edit to the list.
+
 1. **Always `dotnet build` the whole solution before committing.** Project multi-targets
    `net6.0;net10.0`. Building `-f net10.0` only hid a `net6.0` break for 8 commits
    (`SHA256.HashData(Stream)` is .NET 7+; .NET 6 has only the `byte[]` overload). Publish is
@@ -336,6 +340,13 @@ remote, `upstream` = `https://gitlab.com/kamcuk/kcksefcli.git`, so `git fetch` k
   `gitlab.com/kamcuk/kcksefcli` — that is **upstream's** project, so they serve upstream's
   binaries without this fork's hardening. Publishing anything from here means writing the
   build-and-publish workflow first.
+- **An agent session cannot edit the shared checkout** — it must `EnterWorktree` first, and
+  that worktree branches off `origin/main`, *not* off whatever is checked out. To continue a
+  local branch: `git reset --hard <branch>` inside the worktree, commit there, then
+  `git merge --ff-only <worktree-branch>` from the main checkout. Every new worktree re-clones
+  the submodule (~1 min).
+- `docs/UpstreamIssues.md` describes **upstream's** files, not this fork's. Deleting our copy
+  of something it mentions does not make its entry stale — don't prune it.
 
 ## CI (GitHub Actions)
 
