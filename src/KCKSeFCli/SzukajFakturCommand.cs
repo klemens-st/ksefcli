@@ -54,10 +54,10 @@ public class SzukajFakturCommand : IWithConfigCommand {
     """)]
     public required string DateType { get; set; }
 
-    [Option("pageOffset", Default = 0, HelpText = "Page offset for pagination")]
+    [Option("pageOffset", Default = 0, HelpText = "Numer strony wyników, od której zaczyna się pobieranie (numeracja od zera). Jest to numer strony, a nie numer pozycji.")]
     public int PageOffset { get; set; }
 
-    [Option("pageSize", Default = 10, HelpText = "Page size for pagination")]
+    [Option("pageSize", Default = 10, HelpText = "Liczba wyników na jednej stronie. Nie ogranicza łącznej liczby zwróconych faktur — polecenie pobiera kolejne strony do wyczerpania wyników.")]
     public int PageSize { get; set; }
 
     [Option("restrictToPermanentStorageHwmDate", HelpText = "Określa, czy system ma ograniczyć filtrowanie (zakres dateRange.to) do wartości PermanentStorageHwmDate. Dotyczy wyłącznie zapytań z dateType = PermanentStorage.")]
@@ -264,10 +264,6 @@ public class SzukajFakturCommand : IWithConfigCommand {
 
         string accessToken = await GetAccessToken(scope, cancellationToken).ConfigureAwait(false);
 
-        List<InvoiceSummary> allInvoices = new List<InvoiceSummary>();
-        PagedInvoiceResponse pagedInvoicesResponse;
-        int currentPageOffset = settings.PageOffset;
-
         // Every extra page is another API call, so an unbounded search is exactly the workload
         // that trips KSeF's limits. Back off locally and retry on 429 instead of failing the
         // whole query on one throttled page.
@@ -275,28 +271,23 @@ public class SzukajFakturCommand : IWithConfigCommand {
             ? null
             : scope.ServiceProvider.GetRequiredService<ILimitsClient>();
 
-        do {
-            Log.Information($"Fetching page with offset {currentPageOffset} and size {settings.PageSize}");
-            int pageOffset = currentPageOffset;
-            pagedInvoicesResponse = await KsefRateLimitWrapper.ExecuteWithRetryAsync(
-                (ct) => ksefClient.QueryInvoiceMetadataAsync(
+        // InvoicePaging owns the advance from one page to the next: pageOffset is a page index,
+        // so it grows by one per page and never by settings.PageSize.
+        List<InvoiceSummary> allInvoices = await InvoicePaging.CollectAllPagesAsync(
+            (pageOffset, ct) => KsefRateLimitWrapper.ExecuteWithRetryAsync(
+                (retryCt) => ksefClient.QueryInvoiceMetadataAsync(
                     invoiceQueryFilters,
                     accessToken,
                     pageOffset: pageOffset,
                     pageSize: settings.PageSize,
-                    cancellationToken: ct),
+                    cancellationToken: retryCt),
                 KsefApiEndpoint.InvoiceQueryMetadata,
                 limitsClient,
                 settings.RetryAttempts,
                 accessToken,
-                cancellationToken).ConfigureAwait(false);
-
-            if (pagedInvoicesResponse.Invoices != null) {
-                allInvoices.AddRange(pagedInvoicesResponse.Invoices);
-            }
-
-            currentPageOffset += settings.PageSize;
-        } while (pagedInvoicesResponse.HasMore == true);
+                ct),
+            settings.PageOffset,
+            cancellationToken).ConfigureAwait(false);
 
         Log.Information($"Found {allInvoices.Count} invoices.");
 

@@ -17,8 +17,8 @@ kcksefcli SzukajFaktur --from "-7days" --subjectType Subject2
 | `--from`                                | Data początkowa. Szczegóły formatu daty: zobacz [ParseDate](ParseDate.md).                                       |              | Tak      |
 | `--to`                                  | Data końcowa. Szczegóły formatu daty: zobacz [ParseDate](ParseDate.md).                                                   |              | Nie      |
 | `--dateType`                            | Typ daty używany w zakresie dat. Możliwe wartości: `Issue`, `Invoicing`, `PermanentStorage`. Zobacz uwagę niżej.                          | `Issue`      | Nie      |
-| `--pageOffset`                          | Numer pozycji, od której zaczyna się pobieranie wyników. Nie ogranicza ich liczby — zobacz uwagę o paginacji.                             | `0`          | Nie      |
-| `--pageSize`                            | Liczba wyników pobieranych w jednym zapytaniu. Nie ogranicza łącznej liczby zwróconych faktur — zobacz uwagę o paginacji.                 | `10`         | Nie      |
+| `--pageOffset`                          | Numer **strony** wyników, od której zaczyna się pobieranie (numeracja od zera, nie jest to numer pozycji). Nie ogranicza liczby wyników — zobacz uwagę o paginacji. | `0`          | Nie      |
+| `--pageSize`                            | Liczba wyników na stronie, czyli w jednym zapytaniu. Nie ogranicza łącznej liczby zwróconych faktur — zobacz uwagę o paginacji.           | `10`         | Nie      |
 | `--retry-attempts`                      | Liczba ponownych prób po przekroczeniu limitu zapytań (HTTP 429).                                                                         | `5`          | Nie      |
 | `--no-local-rate-limit`                 | Wyłącza lokalne ograniczanie liczby zapytań do API.                                                                                      |              | Nie      |
 | `--restrictToPermanentStorageHwmDate`   | Ogranicza filtrowanie do `PermanentStorageHwmDate`. Dotyczy tylko `dateType` = `PermanentStorage`.                                     |              | Nie      |
@@ -61,6 +61,9 @@ bez uprawnień do danej faktury — w obu przypadkach wynikiem jest pusta lista.
 Polecenie samo przechodzi przez kolejne strony, dopóki API zgłasza, że są następne, i zwraca
 **wszystkie** pasujące faktury. `--pageSize` decyduje więc tylko o tym, na ile zapytań zostanie
 podzielone pobieranie.
+
+KSeF numeruje **strony**, a nie pozycje: `--pageOffset 1` to druga strona wyników, a nie druga
+faktura. Przy `--pageSize 10` strona nr 1 zawiera pozycje 11–20.
 
 Ma to znaczenie przede wszystkim dla [`PobierzFaktury`](PobierzFaktury.md), które zapisuje każdy
 wynik na dysk: szerokie kryteria oznaczają nieograniczoną liczbę plików, a nie jedną stronę.
