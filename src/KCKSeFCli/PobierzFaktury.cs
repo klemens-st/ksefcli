@@ -39,9 +39,9 @@ public class PobierzFakturyCommand : SzukajFakturCommand {
         IVerificationLinkService linkSvc = scope.ServiceProvider.GetRequiredService<IVerificationLinkService>();
         IKSeFClient ksefClient = scope.ServiceProvider.GetRequiredService<IKSeFClient>();
 
-        List<InvoiceSummary> invoices = await base.SzukajFaktury(scope, ksefClient, cancellationToken).ConfigureAwait(false);
+        InvoiceQueryResult queryResult = await base.SzukajFaktury(scope, ksefClient, cancellationToken).ConfigureAwait(false);
 
-        foreach (InvoiceSummary invoiceSummary in invoices) {
+        foreach (InvoiceSummary invoiceSummary in queryResult.Invoices) {
             // Both identifiers come from the KSeF response, and the invoice number is chosen by
             // whoever issued the invoice, so neither goes into a path unfiltered.
             string rawName = UseInvoiceNumber && !string.IsNullOrWhiteSpace(invoiceSummary.InvoiceNumber)
@@ -80,7 +80,10 @@ public class PobierzFakturyCommand : SzukajFakturCommand {
             }
         }
 
-        return 0;
+        // Obcięte zapytanie znaczy tu, że katalog wyjściowy zawiera część faktur, a nie
+        // wszystkie pasujące — kod 2 (częściowy sukces), bo katalog wygląda tak samo w obu
+        // przypadkach.
+        return InvoicePaging.ExitCodeFor(queryResult.Truncated);
     }
 
 }

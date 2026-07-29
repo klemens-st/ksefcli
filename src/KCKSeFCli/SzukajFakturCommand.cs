@@ -20,9 +20,12 @@ public class SzukajFakturCommand : IWithConfigCommand {
     [Option("retry-attempts", Default = 5, HelpText = "Liczba ponownych prób po przekroczeniu limitu zapytań (HTTP 429).")]
     public int RetryAttempts { get; set; }
 
-    // Odziedziczone przez PobierzFaktury razem z samą opcją.
+    // Odziedziczone przez PobierzFaktury razem z samymi opcjami. Pierwszy błąd wygrywa —
+    // wszystkie trzy wartości są sprawdzane offline, zanim polecenie cokolwiek pobierze.
     public override string? ValidateOptions() =>
-        KsefRateLimitWrapper.ValidateRetryAttempts(RetryAttempts);
+        KsefRateLimitWrapper.ValidateRetryAttempts(RetryAttempts)
+        ?? InvoicePaging.ValidatePageOffset(PageOffset)
+        ?? InvoicePaging.ValidatePageSize(PageSize);
 
     [Option("no-local-rate-limit", HelpText = "Wyłącz lokalne ograniczanie liczby zapytań do API.")]
     public bool NoLocalRateLimit { get; set; }
@@ -54,10 +57,10 @@ public class SzukajFakturCommand : IWithConfigCommand {
     """)]
     public required string DateType { get; set; }
 
-    [Option("pageOffset", Default = 0, HelpText = "Numer strony wyników, od której zaczyna się pobieranie (numeracja od zera). Jest to numer strony, a nie numer pozycji.")]
+    [Option("pageOffset", Default = 0, HelpText = "Numer strony wyników, od której zaczyna się pobieranie (numeracja od zera, wartość ujemna jest odrzucana). Jest to numer strony, a nie numer pozycji.")]
     public int PageOffset { get; set; }
 
-    [Option("pageSize", Default = 10, HelpText = "Liczba wyników na jednej stronie. Nie ogranicza łącznej liczby zwróconych faktur — polecenie pobiera kolejne strony do wyczerpania wyników.")]
+    [Option("pageSize", Default = 10, HelpText = "Liczba wyników na jednej stronie, co najmniej 1. Nie ogranicza łącznej liczby zwróconych faktur — polecenie pobiera kolejne strony do wyczerpania wyników.")]
     public int PageSize { get; set; }
 
     [Option("restrictToPermanentStorageHwmDate", HelpText = "Określa, czy system ma ograniczyć filtrowanie (zakres dateRange.to) do wartości PermanentStorageHwmDate. Dotyczy wyłącznie zapytań z dateType = PermanentStorage.")]
@@ -150,16 +153,19 @@ public class SzukajFakturCommand : IWithConfigCommand {
         Log.Information("Szukanie faktur...");
         IKSeFClient ksefClient = scope.ServiceProvider.GetRequiredService<IKSeFClient>();
 
-        List<InvoiceSummary> invoices = await SzukajFaktury(
+        InvoiceQueryResult result = await SzukajFaktury(
             scope,
             ksefClient,
             cancellationToken).ConfigureAwait(false);
 
-        Console.WriteLine(JsonSerializer.Serialize(invoices));
-        return 0;
+        Console.WriteLine(JsonSerializer.Serialize(result.Invoices));
+
+        // Kod 2 (częściowy sukces), bo w samym JSON-ie nic nie odróżnia wyniku obciętego od
+        // kompletnego — ostrzeżenie na stderr nie dotrze do skryptu czytającego stdout.
+        return InvoicePaging.ExitCodeFor(result.Truncated);
     }
 
-    protected async Task<List<InvoiceSummary>> SzukajFaktury(
+    protected async Task<InvoiceQueryResult> SzukajFaktury(
         IServiceScope scope,
         IKSeFClient ksefClient,
         CancellationToken cancellationToken) {
@@ -272,8 +278,9 @@ public class SzukajFakturCommand : IWithConfigCommand {
             : scope.ServiceProvider.GetRequiredService<ILimitsClient>();
 
         // InvoicePaging owns the advance from one page to the next: pageOffset is a page index,
-        // so it grows by one per page and never by settings.PageSize.
-        List<InvoiceSummary> allInvoices = await InvoicePaging.CollectAllPagesAsync(
+        // so it grows by one per page and never by settings.PageSize. It also carries back
+        // whether KSeF capped the query.
+        InvoiceQueryResult result = await InvoicePaging.CollectAllPagesAsync(
             (pageOffset, ct) => KsefRateLimitWrapper.ExecuteWithRetryAsync(
                 (retryCt) => ksefClient.QueryInvoiceMetadataAsync(
                     invoiceQueryFilters,
@@ -289,8 +296,13 @@ public class SzukajFakturCommand : IWithConfigCommand {
             settings.PageOffset,
             cancellationToken).ConfigureAwait(false);
 
-        Log.Information($"Found {allInvoices.Count} invoices.");
+        Log.Information($"Found {result.Invoices.Count} invoices.");
 
-        return allInvoices;
+        string? truncationWarning = InvoicePaging.TruncationWarning(result.Truncated);
+        if (truncationWarning != null) {
+            Log.Warning(truncationWarning);
+        }
+
+        return result;
     }
 }

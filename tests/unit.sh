@@ -567,6 +567,35 @@ clitest_retry_attempts_zero_odrzucone() {
     L_unittest_cmd -I ! grep -q "at KCKSeFCli" <<<"$output"
 }
 
+# --pageOffset is a page index, so a negative one is nonsense — and it used to be silently
+# harmful rather than rejected. PaginationHelper appends the parameter only when it is > 0, so
+# every negative index the walk passed through was dropped from the URL and served as page 0:
+# --pageOffset -3 fetched page 0 four times before reaching page 1, and those invoices went into
+# the result repeatedly. The command reported no error, and the duplicates were indistinguishable
+# from genuine matches.
+#
+# Rejected by IGlobalCommand.ValidateOptions, ahead of the config file, DI and authentication —
+# so, like the retry-attempts test above, this one stays offline and a run that starts reaching
+# the network is itself the regression.
+clitest_page_offset_ujemny_odrzucony() {
+    local output
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \
+        cli SzukajFaktur -a token_test --from "-7days" --pageOffset -1 </dev/null
+    L_unittest_cmd -I grep -q "pageOffset" <<<"$output"
+    L_unittest_cmd -I ! grep -q "at KCKSeFCli" <<<"$output"
+}
+
+# The same rule for --pageSize, which PaginationHelper drops by the same > 0 test. A page size
+# below one left the option with no effect at all: the query went out without it and KSeF applied
+# its own default, so the operator got results with no sign their setting had been ignored.
+clitest_page_size_zero_odrzucony() {
+    local output
+    KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \
+        cli SzukajFaktur -a token_test --from "-7days" --pageSize 0 </dev/null
+    L_unittest_cmd -I grep -q "pageSize" <<<"$output"
+    L_unittest_cmd -I ! grep -q "at KCKSeFCli" <<<"$output"
+}
+
 clitest_prod_revoke_refused_without_terminal() {
     local output
     KCKSEFCLI_CONFIG="$DIR/test_kcksefcli.yaml" L_unittest_cmd -j -v output -e 1 \

@@ -51,6 +51,14 @@ Polecenie pobiera **wszystkie** pasujące faktury, przechodząc przez kolejne st
 `--pageSize` nie ogranicza ich liczby. Szerokie kryteria oznaczają więc nieograniczoną liczbę
 plików zapisanych na dysk.
 
+## Limit 10 000 wyników i kod wyjścia `2`
+
+Wyszukiwanie kończy się po 10 000 faktur — to limit KSeF na jedno zapytanie, nie ustawienie tego
+narzędzia. Katalog wyjściowy wygląda wtedy tak samo jak przy komplecie wyników, więc polecenie
+wypisuje ostrzeżenie i kończy się **kodem `2`** (sukces częściowy): zapisane faktury są
+prawdziwe, ale nie są wszystkimi pasującymi. Zawęź kryteria, np. dziel pobieranie na krótsze
+zakresy dat. Szczegóły: [`SzukajFaktur`](SzukajFaktur.md).
+
 
 ## Konfiguracja i Uwierzytelnianie
 

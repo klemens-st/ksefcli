@@ -19,13 +19,13 @@ Needs network to `api.nuget.org` and `github.com`.
 
 ```bash
 dotnet build                                                   # WHOLE solution — see gotcha 1
-dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 224 tests
+dotnet test tests/KCKSeFCli.Tests/KCKSeFCli.Tests.csproj        # 248 tests
 dotnet publish src/KCKSeFCli/KCKSeFCli.csproj -c Release -r linux-x64 -f net10.0 -o dist
-./tests/unit.sh ./dist/kcksefcli                                # 62 CLI tests (publish first)
+./tests/unit.sh ./dist/kcksefcli                                # 64 CLI tests (publish first)
 dotnet run --project src/KCKSeFCli -f net10.0 -- <verb> [opts]  # -f is required
 ```
 
-The 62 come from three files: `unit.sh` (53) sources `cmdauth.sh` (3) and `test_parsedate.sh` (6).
+The 64 come from three files: `unit.sh` (55) sources `cmdauth.sh` (3) and `test_parsedate.sh` (6).
 Called with no binary path, `unit.sh` runs `make build` and tests the `cli` symlink (Debug) instead.
 
 **`tests/integration.sh` and `tests/ci.sh` cannot be run from an agent session.**
@@ -207,8 +207,11 @@ does not exist yet, so write it alongside the fix:
 - **User-facing output and docs are Polish**; code comments and commit messages are English.
   This includes `[Option(HelpText = ...)]`. Existing HelpText is inconsistently English —
   don't copy a neighbour, write Polish.
-- Exit codes: `0` ok, `1` failure, `2` partial success (`PrzeslijFaktury` — some invoices filed,
-  so a blind retry duplicates them), `3` unhandled exception.
+- Exit codes: `0` ok, `1` failure, `2` partial success, `3` unhandled exception. Two things mean
+  `2`: `PrzeslijFaktury` filed some of the invoices (so a blind retry duplicates them), and
+  `SzukajFaktur`/`PobierzFaktury` hit KSeF's 10,000-result cap (`PagedInvoiceResponse.IsTruncated`
+  — the JSON and the output directory look identical either way, so the exit code is the only
+  signal). Widening `2` to a third meaning needs the same test: could a caller act on it wrongly?
 - Option range checks go in `IGlobalCommand.ValidateOptions()`, which `Program.cs` calls between
   `ConfigureLogging` and `ExecuteAsync` — ahead of the config file, DI and authentication, so a
   bad value fails offline. `CommandLineParser` cannot bound a numeric option itself.

@@ -67,13 +67,21 @@ konkretnym uruchomieniu. Logika i uzasadnienie: `src/KCKSeFCli/Utils/DangerousOp
 |---|---|---|
 | 0 | sukces | nie ma czego |
 | 1 | niepowodzenie — nic nie zostało przyjęte | tak, bezpiecznie |
-| **2** | **częściowy sukces — część faktur już złożona** | **NIE** |
+| **2** | **częściowy sukces — wynik niepełny** | **NIE**, patrz niżej |
 | 3 | nieobsłużony wyjątek — stan nieznany | **NIE** bez sprawdzenia |
 
-Kod `2` zwraca `PrzeslijFaktury`, gdy KSeF przyjął część paczki. Ślepe ponowienie **zduplikuje**
-faktury już złożone.
+Kod `2` znaczy co innego przy zapisie i przy odczycie, więc sprawdź, które polecenie go zwróciło:
 
-Postępowanie po kodzie `2` lub `3`:
+- **`PrzeslijFaktury`** — KSeF przyjął część paczki. Ślepe ponowienie **zduplikuje** faktury już
+  złożone. Postępowanie niżej.
+- **`SzukajFaktur` i `PobierzFaktury`** — zapytanie trafiło w limit 10 000 wyników i zostało
+  obcięte. Nic się nie zepsuło, ale wynik **nie jest kompletem** pasujących faktur, a ani JSON na
+  standardowym wyjściu, ani katalog wyjściowy tego po sobie nie pokazują. Ponowienie tego samego
+  zapytania da ten sam obcięty wynik — trzeba zawęzić kryteria, najczęściej dzieląc zakres dat na
+  krótsze przedziały. Nie traktuj takiego wyniku jako pełnej listy, np. przy uzgadnianiu
+  otrzymanych faktur.
+
+Postępowanie po kodzie `2` z `PrzeslijFaktury` lub po kodzie `3`:
 
 1. Zapisz `ReferenceNumber` sesji — jest w logu i tylko on pozwala ustalić stan.
 2. Sprawdź, co faktycznie przeszło (`PrzeslijFaktury` wypisuje status każdej faktury; UPO
